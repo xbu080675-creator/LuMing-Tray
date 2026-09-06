@@ -34,7 +34,8 @@ data class TrayConfig(
     val consoleCookie: String = "",
     val webAuthToken: String = "",
     val webRefreshToken: String = "",
-    val webTokenExpiresAt: Long = 0L
+    val webTokenExpiresAt: Long = 0L,
+    val realtimeEnabled: Boolean = true
 )
 
 object TrayStore {
@@ -83,6 +84,7 @@ object TrayStore {
             .putString("webAuthToken", config.webAuthToken.trim())
             .putString("webRefreshToken", config.webRefreshToken.trim())
             .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
+            .putBoolean("realtimeEnabled", config.realtimeEnabled)
             .apply()
     }
 
@@ -95,7 +97,8 @@ object TrayStore {
             consoleCookie = p.getString("consoleCookie", "") ?: "",
             webAuthToken = p.getString("webAuthToken", "") ?: "",
             webRefreshToken = p.getString("webRefreshToken", "") ?: "",
-            webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L)
+            webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L),
+            realtimeEnabled = p.getBoolean("realtimeEnabled", true)
         )
     }
 
@@ -108,23 +111,22 @@ object TrayStore {
 }
 
 object TrayNotification {
-    private const val CHANNEL_ID = "luming_usage"
-    private const val NOTIFICATION_ID = 1001
+    const val CHANNEL_ID = "luming_usage"
+    const val NOTIFICATION_ID = 1001
 
-    fun show(context: Context, stats: UsageStats? = TrayStore.loadStats(context)) {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
-
-        val manager = context.getSystemService(NotificationManager::class.java)
+    fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "LuMing API 用量", NotificationManager.IMPORTANCE_LOW).apply {
                     description = "显示 LuMing API 的余额、消费和 Token"
                     setShowBadge(false)
                 }
             )
         }
+    }
+
+    fun buildNotification(context: Context, stats: UsageStats? = TrayStore.loadStats(context)): Notification {
+        ensureChannel(context)
 
         val open = PendingIntent.getActivity(
             context,
@@ -140,10 +142,17 @@ object TrayNotification {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val recharge = PendingIntent.getActivity(
+            context,
+            2,
+            Intent(context, RechargeActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val title = stats?.balance?.let { "LuMing · 余额 ${money(it)}" } ?: "LuMing Tray"
         val text = stats?.let {
             "今日 ${it.todayCost?.let(::money) ?: "--"} · ${it.requests ?: "--"} 次 · ${it.totalTokens?.let(::tokens) ?: "--"} Token"
-        } ?: "托盘已启动，等待首次刷新"
+        } ?: "托盘已启动，等待首次读取"
 
         val expanded = if (stats != null) {
             buildString {
@@ -162,22 +171,29 @@ object TrayNotification {
                 append("\n更新 ${time(stats.updatedAt)}")
             }
         } else {
-            "打开 LuMing Tray，网页登录或填写凭据后刷新。"
+            "打开 LuMing Tray，网页登录后即可自动读取。"
         }
 
-        val notification = Notification.Builder(context, CHANNEL_ID)
+        return Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(expanded))
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_popup_sync), "刷新", refresh).build())
+            .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_menu_view), "充值", recharge).build())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .build()
+    }
 
-        manager.notify(NOTIFICATION_ID, notification)
+    fun show(context: Context, stats: UsageStats? = TrayStore.loadStats(context)) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        context.getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildNotification(context, stats))
     }
 
     fun money(value: Double): String =
@@ -197,7 +213,7 @@ object TrayNotification {
     }
 
     fun seconds(value: Double): String =
-        if (value >= 10) String.format(Locale.US, "%.2fs", value) else String.format(Locale.US, "%.2fs", value)
+        String.format(Locale.US, "%.2fs", value)
 
     private fun time(timestamp: Long): String =
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
