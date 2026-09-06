@@ -79,13 +79,13 @@ object UsageClient {
                     val data = response.optJSONObject("data")
                     val rawBalance = data?.number("quota", "Quota")
                     balance = quotaToMoney(rawBalance, quotaInfo)
-                    notes += "$authName认证 OK"
+                    notes += "${authName}认证 OK"
                     notes += "余额 OK"
                 } else {
-                    notes += "$authName：${response.messageOr("未授权")}" 
+                    notes += "${authName}：${response.messageOr("未授权")}" 
                 }
             } ?: run {
-                notes += "$authName接口不可用"
+                notes += "${authName}接口不可用"
             }
 
             val dashboard = requestJson("$root/api/user/dashboard", authHeader, cookie)
