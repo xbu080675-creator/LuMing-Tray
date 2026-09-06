@@ -19,6 +19,9 @@ class BootReceiver : BroadcastReceiver() {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
             TrayNotification.show(context)
             TrayScheduler.ensure(context)
+            if (TrayStore.loadConfig(context).realtimeEnabled) {
+                RealtimeUsageService.start(context)
+            }
         }
     }
 }
