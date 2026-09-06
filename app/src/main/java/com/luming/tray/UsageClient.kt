@@ -10,8 +10,10 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -33,7 +35,26 @@ private data class QuotaInfo(
     val displayType: String? = null
 )
 
+private data class Sub2Snapshot(
+    val balance: Double? = null,
+    val todayCost: Double? = null,
+    val requests: Long? = null,
+    val totalTokens: Long? = null,
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val avgResponseSeconds: Double? = null,
+    val rpm: Double? = null,
+    val tpm: Double? = null
+)
+
+private data class RefreshedWebAuth(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresAt: Long
+)
+
 object UsageClient {
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val client = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -48,8 +69,13 @@ object UsageClient {
     }
 
     fun refreshBlocking(context: Context): RefreshResult {
-        val config = TrayStore.loadConfig(context)
-        if (config.apiKey.isBlank() && config.accessToken.isBlank() && config.consoleCookie.isBlank()) {
+        var config = TrayStore.loadConfig(context)
+        if (
+            config.apiKey.isBlank() &&
+            config.accessToken.isBlank() &&
+            config.consoleCookie.isBlank() &&
+            config.webAuthToken.isBlank()
+        ) {
             return RefreshResult(false, TrayStore.loadStats(context), "请先网页登录，或填写 API Key / Access Token")
         }
 
@@ -61,17 +87,71 @@ object UsageClient {
         var balance: Double? = null
         var todayCost: Double? = null
         var requests: Long? = null
+        var totalTokens: Long? = null
         var inputTokens: Long? = null
         var outputTokens: Long? = null
         var avgSeconds: Double? = null
+        var rpm: Double? = null
+        var tpm: Double? = null
+        var sub2Matched = false
 
+        // LuMing 当前网页与 Sub2API 前端高度一致：网页登录凭据实际放在
+        // localStorage 的 auth_token / refresh_token，而不是只靠 Cookie。
+        var webToken = config.webAuthToken.trim()
+        if (webToken.isNotBlank()) {
+            val expiringSoon = config.webTokenExpiresAt > 0L &&
+                config.webTokenExpiresAt <= System.currentTimeMillis() + 60_000L
+            if (expiringSoon && config.webRefreshToken.isNotBlank()) {
+                refreshSub2Token(root, config.webRefreshToken)?.let { refreshed ->
+                    config = config.copy(
+                        webAuthToken = refreshed.accessToken,
+                        webRefreshToken = refreshed.refreshToken,
+                        webTokenExpiresAt = refreshed.expiresAt
+                    )
+                    TrayStore.saveConfig(context, config)
+                    webToken = refreshed.accessToken
+                    notes += "网页登录令牌已续期"
+                }
+            }
+
+            var sub2 = fetchSub2Snapshot(root, webToken)
+            if (sub2 == null && config.webRefreshToken.isNotBlank()) {
+                refreshSub2Token(root, config.webRefreshToken)?.let { refreshed ->
+                    config = config.copy(
+                        webAuthToken = refreshed.accessToken,
+                        webRefreshToken = refreshed.refreshToken,
+                        webTokenExpiresAt = refreshed.expiresAt
+                    )
+                    TrayStore.saveConfig(context, config)
+                    webToken = refreshed.accessToken
+                    sub2 = fetchSub2Snapshot(root, webToken)
+                    if (sub2 != null) notes += "网页登录令牌已恢复"
+                }
+            }
+
+            if (sub2 != null) {
+                sub2Matched = true
+                balance = sub2.balance
+                todayCost = sub2.todayCost
+                requests = sub2.requests
+                totalTokens = sub2.totalTokens
+                inputTokens = sub2.inputTokens
+                outputTokens = sub2.outputTokens
+                avgSeconds = sub2.avgResponseSeconds
+                rpm = sub2.rpm
+                tpm = sub2.tpm
+                notes += "Sub2API 仪表盘 OK"
+            }
+        }
+
+        // 兼容 One API / New API 系站点；仅在 Sub2API 路径没有命中时尝试。
         val authHeader = config.accessToken
             .removePrefix("Bearer ")
             .trim()
             .takeIf { it.isNotBlank() }
         val cookie = config.consoleCookie.trim().takeIf { it.isNotBlank() }
 
-        if (authHeader != null || cookie != null) {
+        if (!sub2Matched && (authHeader != null || cookie != null)) {
             val authName = if (cookie != null) "网页登录" else "Access Token"
 
             requestJson("$root/api/user/self", authHeader, cookie)?.let { response ->
@@ -82,7 +162,7 @@ object UsageClient {
                     notes += "${authName}认证 OK"
                     notes += "余额 OK"
                 } else {
-                    notes += "${authName}：${response.messageOr("未授权")}" 
+                    notes += "${authName}：${response.messageOr("未授权")}"
                 }
             } ?: run {
                 notes += "${authName}接口不可用"
@@ -114,12 +194,14 @@ object UsageClient {
                     requests = dayRequests
                     inputTokens = dayInput
                     outputTokens = dayOutput
+                    totalTokens = dayInput + dayOutput
                     notes += "今日统计 OK"
                 } else {
                     todayCost = 0.0
                     requests = 0
                     inputTokens = 0
                     outputTokens = 0
+                    totalTokens = 0
                     notes += "今日暂无调用"
                 }
             } else if (dashboard != null) {
@@ -134,6 +216,7 @@ object UsageClient {
                     todayCost = logStats.todayCost
                     inputTokens = logStats.inputTokens
                     outputTokens = logStats.outputTokens
+                    totalTokens = logStats.inputTokens + logStats.outputTokens
                     notes += "日志统计 OK"
                 }
             }
@@ -170,7 +253,8 @@ object UsageClient {
             }
         }
 
-        val hasUsefulData = balance != null || requests != null || inputTokens != null || outputTokens != null
+        val hasUsefulData = balance != null || requests != null || totalTokens != null ||
+            inputTokens != null || outputTokens != null
         val previous = TrayStore.loadStats(context)
         if (!hasUsefulData) {
             val msg = notes.distinct().joinToString(" · ").ifBlank { "未识别到兼容的统计接口" }
@@ -182,13 +266,15 @@ object UsageClient {
             balance = balance ?: previous?.balance,
             todayCost = todayCost ?: previous?.todayCost,
             requests = requests ?: previous?.requests,
-            totalTokens = when {
+            totalTokens = totalTokens ?: when {
                 inputTokens != null || outputTokens != null -> (inputTokens ?: 0L) + (outputTokens ?: 0L)
                 else -> previous?.totalTokens
             },
             inputTokens = inputTokens ?: previous?.inputTokens,
             outputTokens = outputTokens ?: previous?.outputTokens,
             avgResponseSeconds = avgSeconds ?: previous?.avgResponseSeconds,
+            rpm = rpm ?: previous?.rpm,
+            tpm = tpm ?: previous?.tpm,
             updatedAt = System.currentTimeMillis()
         )
         TrayStore.saveStats(context, stats)
@@ -197,6 +283,53 @@ object UsageClient {
         TrayStore.saveLastMessage(context, msg)
         TrayNotification.show(context, stats)
         return RefreshResult(true, stats, msg)
+    }
+
+    private fun fetchSub2Snapshot(root: String, token: String): Sub2Snapshot? {
+        val authorization = "Bearer $token"
+        val me = unwrapApiData(requestJson("$root/api/v1/auth/me", authorization, null))
+        val dashboard = unwrapApiData(
+            requestJson("$root/api/v1/usage/dashboard/stats", authorization, null)
+        )
+
+        if (me == null && dashboard == null) return null
+
+        return Sub2Snapshot(
+            balance = me?.number("balance"),
+            todayCost = dashboard?.number("today_actual_cost", "today_cost"),
+            requests = dashboard?.longNumber("today_requests"),
+            totalTokens = dashboard?.longNumber("today_tokens"),
+            inputTokens = dashboard?.longNumber("today_input_tokens"),
+            outputTokens = dashboard?.longNumber("today_output_tokens"),
+            avgResponseSeconds = dashboard?.number("average_duration_ms")?.div(1000.0),
+            rpm = dashboard?.number("rpm"),
+            tpm = dashboard?.number("tpm")
+        )
+    }
+
+    private fun refreshSub2Token(root: String, refreshToken: String): RefreshedWebAuth? {
+        val response = postJson(
+            "$root/api/v1/auth/refresh",
+            JSONObject().put("refresh_token", refreshToken)
+        ) ?: return null
+        val data = unwrapApiData(response) ?: return null
+        val access = data.string("access_token") ?: return null
+        val rotatedRefresh = data.string("refresh_token") ?: refreshToken
+        val expiresIn = data.longNumber("expires_in") ?: 3600L
+        return RefreshedWebAuth(
+            accessToken = access,
+            refreshToken = rotatedRefresh,
+            expiresAt = System.currentTimeMillis() + expiresIn * 1000L
+        )
+    }
+
+    private fun unwrapApiData(response: JSONObject?): JSONObject? {
+        response ?: return null
+        if (response.has("code")) {
+            if (response.optInt("code", -1) != 0) return null
+            return response.optJSONObject("data")
+        }
+        return response.optJSONObject("data") ?: response
     }
 
     private fun fetchQuotaInfo(root: String): QuotaInfo {
@@ -303,7 +436,7 @@ object UsageClient {
                 .url(url)
                 .get()
                 .header("Accept", "application/json")
-                .header("User-Agent", "LuMing-Tray/0.3")
+                .header("User-Agent", "LuMing-Tray/0.4")
             if (!authorization.isNullOrBlank()) {
                 builder.header("Authorization", authorization)
             }
@@ -311,6 +444,24 @@ object UsageClient {
                 builder.header("Cookie", cookie)
             }
             client.newCall(builder.build()).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (body.isBlank()) return null
+                JSONObject(body)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun postJson(url: String, payload: JSONObject): JSONObject? {
+        return try {
+            val request = Request.Builder()
+                .url(url)
+                .post(payload.toString().toRequestBody(jsonMediaType))
+                .header("Accept", "application/json")
+                .header("User-Agent", "LuMing-Tray/0.4")
+                .build()
+            client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (body.isBlank()) return null
                 JSONObject(body)
@@ -367,7 +518,12 @@ class UsageWorker(
 ) : Worker(appContext, params) {
     override fun doWork(): Result {
         val config = TrayStore.loadConfig(applicationContext)
-        if (config.apiKey.isBlank() && config.accessToken.isBlank() && config.consoleCookie.isBlank()) {
+        if (
+            config.apiKey.isBlank() &&
+            config.accessToken.isBlank() &&
+            config.consoleCookie.isBlank() &&
+            config.webAuthToken.isBlank()
+        ) {
             return Result.success()
         }
         UsageClient.refreshBlocking(applicationContext)

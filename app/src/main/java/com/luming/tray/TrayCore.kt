@@ -22,6 +22,8 @@ data class UsageStats(
     val inputTokens: Long? = null,
     val outputTokens: Long? = null,
     val avgResponseSeconds: Double? = null,
+    val rpm: Double? = null,
+    val tpm: Double? = null,
     val updatedAt: Long = System.currentTimeMillis()
 )
 
@@ -29,7 +31,10 @@ data class TrayConfig(
     val baseUrl: String = "https://lmyanyu.com/v1",
     val apiKey: String = "",
     val accessToken: String = "",
-    val consoleCookie: String = ""
+    val consoleCookie: String = "",
+    val webAuthToken: String = "",
+    val webRefreshToken: String = "",
+    val webTokenExpiresAt: Long = 0L
 )
 
 object TrayStore {
@@ -45,6 +50,8 @@ object TrayStore {
             .putString("inputTokens", stats.inputTokens?.toString())
             .putString("outputTokens", stats.outputTokens?.toString())
             .putString("avgResponseSeconds", stats.avgResponseSeconds?.toString())
+            .putString("rpm", stats.rpm?.toString())
+            .putString("tpm", stats.tpm?.toString())
             .putLong("updatedAt", stats.updatedAt)
             .apply()
     }
@@ -61,6 +68,8 @@ object TrayStore {
             inputTokens = p.getString("inputTokens", null)?.toLongOrNull(),
             outputTokens = p.getString("outputTokens", null)?.toLongOrNull(),
             avgResponseSeconds = p.getString("avgResponseSeconds", null)?.toDoubleOrNull(),
+            rpm = p.getString("rpm", null)?.toDoubleOrNull(),
+            tpm = p.getString("tpm", null)?.toDoubleOrNull(),
             updatedAt = updatedAt
         )
     }
@@ -71,6 +80,9 @@ object TrayStore {
             .putString("apiKey", config.apiKey.trim())
             .putString("accessToken", config.accessToken.trim())
             .putString("consoleCookie", config.consoleCookie.trim())
+            .putString("webAuthToken", config.webAuthToken.trim())
+            .putString("webRefreshToken", config.webRefreshToken.trim())
+            .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
             .apply()
     }
 
@@ -80,7 +92,10 @@ object TrayStore {
             baseUrl = p.getString("baseUrl", null)?.takeIf { it.isNotBlank() } ?: TrayConfig().baseUrl,
             apiKey = p.getString("apiKey", "") ?: "",
             accessToken = p.getString("accessToken", "") ?: "",
-            consoleCookie = p.getString("consoleCookie", "") ?: ""
+            consoleCookie = p.getString("consoleCookie", "") ?: "",
+            webAuthToken = p.getString("webAuthToken", "") ?: "",
+            webRefreshToken = p.getString("webRefreshToken", "") ?: "",
+            webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L)
         )
     }
 
@@ -138,6 +153,9 @@ object TrayNotification {
                 if (stats.inputTokens != null || stats.outputTokens != null) {
                     append("（入 ${stats.inputTokens?.let(::tokens) ?: "--"} / 出 ${stats.outputTokens?.let(::tokens) ?: "--"}）")
                 }
+                if (stats.rpm != null || stats.tpm != null) {
+                    append("\n性能 ${stats.rpm?.let(::rate) ?: "--"} RPM · ${stats.tpm?.let(::rate) ?: "--"} TPM")
+                }
                 if (stats.avgResponseSeconds != null) {
                     append("\n平均响应 ${seconds(stats.avgResponseSeconds)}")
                 }
@@ -171,8 +189,15 @@ object TrayNotification {
         else -> value.toString()
     }
 
+    fun rate(value: Double): String = when {
+        value >= 1_000_000 -> String.format(Locale.US, "%.2fM", value / 1_000_000.0).trimEnd('0').trimEnd('.')
+        value >= 1_000 -> String.format(Locale.US, "%.1fK", value / 1_000.0).trimEnd('0').trimEnd('.')
+        value % 1.0 == 0.0 -> value.toLong().toString()
+        else -> String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
+
     fun seconds(value: Double): String =
-        if (value >= 10) String.format(Locale.US, "%.1fs", value) else String.format(Locale.US, "%.2fs", value)
+        if (value >= 10) String.format(Locale.US, "%.2fs", value) else String.format(Locale.US, "%.2fs", value)
 
     private fun time(timestamp: Long): String =
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))

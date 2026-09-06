@@ -127,7 +127,7 @@ class MainActivity : Activity() {
         root.addView(accessTokenField, matchHeight(54))
 
         root.addView(TextView(this).apply {
-            text = "推荐直接使用“网页登录并授权统计”。App 不保存账号密码，只复用登录成功后的本站 Cookie；API Key 和 Access Token 仍可作为兼容接口兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
+            text = "推荐直接使用“网页登录并授权统计”。M0.4 会从网页登录会话中读取站点自己的访问令牌，并直接调用仪表盘统计接口；令牌失效时可用刷新令牌自动续期。API Key 和手动 Access Token 仍作为其他兼容站点的兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             setPadding(dp(4), dp(10), dp(4), 0)
@@ -155,7 +155,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "M0.3 · 网页登录 Cookie / 状态栏安全区 / 真实数据刷新"
+            text = "M0.4 · Sub2API 仪表盘适配 / 网页令牌续期 / DOM 直读兜底"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -177,11 +177,10 @@ class MainActivity : Activity() {
         val old = TrayStore.loadConfig(this)
         TrayStore.saveConfig(
             this,
-            TrayConfig(
+            old.copy(
                 baseUrl = baseUrl,
                 apiKey = apiKeyField.text.toString().trim(),
-                accessToken = accessTokenField.text.toString().trim(),
-                consoleCookie = old.consoleCookie
+                accessToken = accessTokenField.text.toString().trim()
             )
         )
     }
@@ -208,10 +207,10 @@ class MainActivity : Activity() {
 
     private fun renderState(message: String? = null) {
         val config = TrayStore.loadConfig(this)
-        loginStateText.text = if (config.consoleCookie.isNotBlank()) {
-            "网页登录：已保存登录会话（失效时重新登录即可）"
-        } else {
-            "网页登录：未授权"
+        loginStateText.text = when {
+            config.webAuthToken.isNotBlank() -> "网页登录：已授权（站点令牌可后台续期）"
+            config.consoleCookie.isNotBlank() -> "网页登录：已保存 Cookie（兼容模式）"
+            else -> "网页登录：未授权"
         }
 
         val stats = TrayStore.loadStats(this)
@@ -222,6 +221,7 @@ class MainActivity : Activity() {
                 "今日请求        --\n" +
                 "今日 Token      --\n" +
                 "输入 / 输出     -- / --\n" +
+                "RPM / TPM       -- / --\n" +
                 "平均响应        --"
         } else {
             buildString {
@@ -230,6 +230,7 @@ class MainActivity : Activity() {
                 append("\n今日请求        ${stats.requests ?: "--"}")
                 append("\n今日 Token      ${stats.totalTokens?.let(TrayNotification::tokens) ?: "--"}")
                 append("\n输入 / 输出     ${stats.inputTokens?.let(TrayNotification::tokens) ?: "--"} / ${stats.outputTokens?.let(TrayNotification::tokens) ?: "--"}")
+                append("\nRPM / TPM       ${stats.rpm?.let(TrayNotification::rate) ?: "--"} / ${stats.tpm?.let(TrayNotification::rate) ?: "--"}")
                 append("\n平均响应        ${stats.avgResponseSeconds?.let(TrayNotification::seconds) ?: "--"}")
                 append("\n\n最后更新        ${formatTime(stats.updatedAt)}")
             }
