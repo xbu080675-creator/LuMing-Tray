@@ -35,7 +35,14 @@ data class TrayConfig(
     val webAuthToken: String = "",
     val webRefreshToken: String = "",
     val webTokenExpiresAt: Long = 0L,
-    val realtimeEnabled: Boolean = true
+    val realtimeEnabled: Boolean = true,
+    val floatingEnabled: Boolean = false,
+    val floatingWidthDp: Int = 230,
+    val floatingHeightDp: Int = 126,
+    val floatingX: Int = 24,
+    val floatingY: Int = 220,
+    val balanceAlertEnabled: Boolean = true,
+    val balanceAlertThreshold: Double = 0.50
 )
 
 object TrayStore {
@@ -55,6 +62,8 @@ object TrayStore {
             .putString("tpm", stats.tpm?.toString())
             .putLong("updatedAt", stats.updatedAt)
             .apply()
+
+        BalanceAlert.evaluate(context, stats)
     }
 
     fun loadStats(context: Context): UsageStats? {
@@ -85,6 +94,13 @@ object TrayStore {
             .putString("webRefreshToken", config.webRefreshToken.trim())
             .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
             .putBoolean("realtimeEnabled", config.realtimeEnabled)
+            .putBoolean("floatingEnabled", config.floatingEnabled)
+            .putInt("floatingWidthDp", config.floatingWidthDp)
+            .putInt("floatingHeightDp", config.floatingHeightDp)
+            .putInt("floatingX", config.floatingX)
+            .putInt("floatingY", config.floatingY)
+            .putBoolean("balanceAlertEnabled", config.balanceAlertEnabled)
+            .putString("balanceAlertThreshold", config.balanceAlertThreshold.toString())
             .apply()
     }
 
@@ -98,9 +114,23 @@ object TrayStore {
             webAuthToken = p.getString("webAuthToken", "") ?: "",
             webRefreshToken = p.getString("webRefreshToken", "") ?: "",
             webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L),
-            realtimeEnabled = p.getBoolean("realtimeEnabled", true)
+            realtimeEnabled = p.getBoolean("realtimeEnabled", true),
+            floatingEnabled = p.getBoolean("floatingEnabled", false),
+            floatingWidthDp = p.getInt("floatingWidthDp", 230),
+            floatingHeightDp = p.getInt("floatingHeightDp", 126),
+            floatingX = p.getInt("floatingX", 24),
+            floatingY = p.getInt("floatingY", 220),
+            balanceAlertEnabled = p.getBoolean("balanceAlertEnabled", true),
+            balanceAlertThreshold = p.getString("balanceAlertThreshold", "0.50")?.toDoubleOrNull() ?: 0.50
         )
     }
+
+    fun saveBalanceAlertState(context: Context, state: Int) {
+        prefs(context).edit().putInt("balanceAlertState", state).apply()
+    }
+
+    fun loadBalanceAlertState(context: Context): Int =
+        prefs(context).getInt("balanceAlertState", 0)
 
     fun saveLastMessage(context: Context, message: String) {
         prefs(context).edit().putString("lastMessage", message).apply()

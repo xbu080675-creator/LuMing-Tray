@@ -7,8 +7,10 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
@@ -30,9 +32,13 @@ class MainActivity : Activity() {
     private lateinit var baseUrlField: EditText
     private lateinit var apiKeyField: EditText
     private lateinit var accessTokenField: EditText
+    private lateinit var balanceAlertThresholdField: EditText
     private lateinit var refreshButton: Button
     private lateinit var realtimeButton: Button
+    private lateinit var floatingButton: Button
+    private lateinit var balanceAlertButton: Button
     private var autoRefreshInFlight = false
+    private var waitingOverlayPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,8 +51,17 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+
+        if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
+            waitingOverlayPermission = false
+            val old = TrayStore.loadConfig(this)
+            TrayStore.saveConfig(this, old.copy(floatingEnabled = true))
+            FloatingTrayService.start(this)
+        }
+
         renderState()
         syncRealtimeService()
+        syncFloatingService()
         maybeAutoRefresh()
     }
 
@@ -82,7 +97,7 @@ class MainActivity : Activity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "手机通知栏里的 API 用量托盘"
+            text = "手机通知栏与悬浮窗里的 API 用量托盘"
             textSize = 15f
             setTextColor(Color.rgb(100, 110, 122))
             setPadding(0, dp(6), 0, dp(22))
@@ -102,6 +117,12 @@ class MainActivity : Activity() {
         }
         root.addView(realtimeButton, matchHeight(50).apply { topMargin = dp(12) })
 
+        floatingButton = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener { toggleFloating() }
+        }
+        root.addView(floatingButton, matchHeight(50).apply { topMargin = dp(8) })
+
         root.addView(Button(this).apply {
             text = "充值"
             isAllCaps = false
@@ -115,10 +136,30 @@ class MainActivity : Activity() {
         }, matchHeight(50).apply { topMargin = dp(8) })
 
         root.addView(TextView(this).apply {
-            text = "近实时模式：亮屏时约 10 秒检查一次；长期无变化会自动降频。熄屏后从约 60 秒开始，并逐步退到 2～5 分钟，减少耗电和无意义请求。"
+            text = "悬浮窗不会额外请求 API，只显示近实时服务已经保存的数据。拖动标题移动位置，拖动右下角 ↘ 可自由缩放，位置和大小会自动记住。"
             textSize = 12.5f
             setTextColor(Color.rgb(86, 96, 110))
             setPadding(dp(4), dp(10), dp(4), 0)
+        })
+
+        root.addView(sectionTitle("余额预警"))
+
+        balanceAlertButton = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener { toggleBalanceAlert() }
+        }
+        root.addView(balanceAlertButton, matchHeight(48))
+
+        balanceAlertThresholdField = editField("预警阈值，例如 0.50").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        root.addView(balanceAlertThresholdField, matchHeight(54).apply { topMargin = dp(8) })
+
+        root.addView(TextView(this).apply {
+            text = "余额首次跌破阈值时提醒一次；继续低于阈值不会反复轰炸。充值回阈值以上后自动复位；余额 ≤ 0 会升级为“余额不足”提醒。"
+            textSize = 12.5f
+            setTextColor(Color.rgb(86, 96, 110))
+            setPadding(dp(4), dp(8), dp(4), 0)
         })
 
         root.addView(sectionTitle("连接设置"))
@@ -184,7 +225,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "M0.6 · 近实时监控 / 自适应降频 / 一键充值"
+            text = "M0.7 · 可缩放悬浮窗 / 余额预警 / 近实时监控 / 一键充值"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -200,18 +241,30 @@ class MainActivity : Activity() {
         baseUrlField.setText(config.baseUrl)
         apiKeyField.setText(config.apiKey)
         accessTokenField.setText(config.accessToken)
+        balanceAlertThresholdField.setText(
+            String.format(Locale.US, "%.2f", config.balanceAlertThreshold)
+        )
     }
 
     private fun saveFields(baseUrl: String = baseUrlField.text.toString().trim().trimEnd('/')) {
         val old = TrayStore.loadConfig(this)
+        val threshold = balanceAlertThresholdField.text.toString().trim()
+            .toDoubleOrNull()?.coerceAtLeast(0.0) ?: old.balanceAlertThreshold
+        val alertSettingsChanged = threshold != old.balanceAlertThreshold
+
         TrayStore.saveConfig(
             this,
             old.copy(
                 baseUrl = baseUrl,
                 apiKey = apiKeyField.text.toString().trim(),
-                accessToken = accessTokenField.text.toString().trim()
+                accessToken = accessTokenField.text.toString().trim(),
+                balanceAlertThreshold = threshold
             )
         )
+        if (alertSettingsChanged) {
+            TrayStore.saveBalanceAlertState(this, 0)
+            TrayStore.loadStats(this)?.let { BalanceAlert.evaluate(this, it) }
+        }
     }
 
     private fun saveAndRefresh() {
@@ -223,10 +276,12 @@ class MainActivity : Activity() {
         saveFields(baseUrl)
         TrayScheduler.ensure(this)
         syncRealtimeService()
+        syncFloatingService()
         refreshNow(manual = true)
     }
 
     private fun toggleRealtime() {
+        saveFields()
         val old = TrayStore.loadConfig(this)
         val next = !old.realtimeEnabled
         TrayStore.saveConfig(this, old.copy(realtimeEnabled = next))
@@ -238,12 +293,62 @@ class MainActivity : Activity() {
         renderState(if (next) "近实时监控已开启" else "近实时监控已关闭；仍保留低频后台更新")
     }
 
+    private fun toggleFloating() {
+        saveFields()
+        val old = TrayStore.loadConfig(this)
+        if (old.floatingEnabled) {
+            TrayStore.saveConfig(this, old.copy(floatingEnabled = false))
+            FloatingTrayService.stop(this)
+            renderState("悬浮窗已关闭")
+            return
+        }
+
+        if (!Settings.canDrawOverlays(this)) {
+            waitingOverlayPermission = true
+            diagnosticText.text = "请允许 LuMing Tray 显示在其他应用上层，返回后会自动开启悬浮窗。"
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+            return
+        }
+
+        TrayStore.saveConfig(this, old.copy(floatingEnabled = true))
+        FloatingTrayService.start(this)
+        renderState("悬浮窗已开启")
+    }
+
+    private fun toggleBalanceAlert() {
+        saveFields()
+        val old = TrayStore.loadConfig(this)
+        val next = !old.balanceAlertEnabled
+        TrayStore.saveConfig(this, old.copy(balanceAlertEnabled = next))
+        TrayStore.saveBalanceAlertState(this, 0)
+        if (next) {
+            TrayStore.loadStats(this)?.let { BalanceAlert.evaluate(this, it) }
+        } else {
+            BalanceAlert.clear(this)
+        }
+        renderState(if (next) "余额预警已开启" else "余额预警已关闭")
+    }
+
     private fun syncRealtimeService() {
         val config = TrayStore.loadConfig(this)
         if (config.realtimeEnabled) {
             RealtimeUsageService.start(this)
         } else {
             RealtimeUsageService.stop(this)
+        }
+    }
+
+    private fun syncFloatingService() {
+        val config = TrayStore.loadConfig(this)
+        if (config.floatingEnabled && Settings.canDrawOverlays(this)) {
+            FloatingTrayService.start(this)
+        } else {
+            FloatingTrayService.stop(this)
         }
     }
 
@@ -287,6 +392,18 @@ class MainActivity : Activity() {
             "近实时监控：已开启"
         } else {
             "近实时监控：已关闭"
+        }
+
+        floatingButton.text = when {
+            config.floatingEnabled && Settings.canDrawOverlays(this) -> "悬浮窗：已开启"
+            config.floatingEnabled -> "悬浮窗：等待系统授权"
+            else -> "悬浮窗：已关闭"
+        }
+
+        balanceAlertButton.text = if (config.balanceAlertEnabled) {
+            "余额预警：已开启"
+        } else {
+            "余额预警：已关闭"
         }
 
         loginStateText.text = when {
@@ -347,6 +464,7 @@ class MainActivity : Activity() {
         ) {
             TrayNotification.show(this)
             syncRealtimeService()
+            TrayStore.loadStats(this)?.let { BalanceAlert.evaluate(this, it) }
         }
     }
 

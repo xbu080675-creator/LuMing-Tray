@@ -3,6 +3,7 @@ package com.luming.tray
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 
 class RefreshReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -19,8 +20,12 @@ class BootReceiver : BroadcastReceiver() {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
             TrayNotification.show(context)
             TrayScheduler.ensure(context)
-            if (TrayStore.loadConfig(context).realtimeEnabled) {
+            val config = TrayStore.loadConfig(context)
+            if (config.realtimeEnabled) {
                 RealtimeUsageService.start(context)
+            }
+            if (config.floatingEnabled && Settings.canDrawOverlays(context)) {
+                FloatingTrayService.start(context)
             }
         }
     }
