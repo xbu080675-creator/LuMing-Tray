@@ -139,21 +139,27 @@ class FloatingTrayService : Service() {
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(44)
         }
         footer.addView(TextView(this).apply {
-            text = "拖标题移动"
+            text = "拖标题移动 · 拖底栏缩放"
             textSize = 9.5f
             setTextColor(Color.rgb(130, 138, 148))
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val resize = TextView(this).apply {
             text = "↘"
-            textSize = 18f
+            textSize = 22f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(72, 82, 94))
-            setPadding(dp(8), 0, 0, 0)
+            minWidth = dp(52)
+            minHeight = dp(44)
+            setPadding(dp(10), dp(4), dp(4), dp(4))
         }
-        footer.addView(resize)
+        footer.addView(
+            resize,
+            LinearLayout.LayoutParams(dp(52), dp(44))
+        )
         card.addView(footer)
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
@@ -178,7 +184,7 @@ class FloatingTrayService : Service() {
         rootView = card
 
         attachDrag(header, lp)
-        attachResize(resize, lp)
+        attachResize(footer, lp)
 
         try {
             windowManager.addView(card, lp)
@@ -232,29 +238,33 @@ class FloatingTrayService : Service() {
     }
 
     private fun attachResize(handle: View, lp: WindowManager.LayoutParams) {
-        var lastRawX = 0f
-        var lastRawY = 0f
+        var startWidth = 0
+        var startHeight = 0
+        var downRawX = 0f
+        var downRawY = 0f
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
-                    lastRawX = event.rawX
-                    lastRawY = event.rawY
+                    startWidth = lp.width
+                    startHeight = lp.height
+                    downRawX = event.rawX
+                    downRawY = event.rawY
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - lastRawX).roundToInt()
-                    val dy = (event.rawY - lastRawY).roundToInt()
-                    lastRawX = event.rawX
-                    lastRawY = event.rawY
-
+                    // Use absolute displacement from ACTION_DOWN instead of rounding every
+                    // tiny incremental MOVE. Slow finger motion can otherwise lose sub-pixel
+                    // movement on high-density/high-refresh-rate screens and feel insensitive.
+                    val dx = ((event.rawX - downRawX) * RESIZE_SENSITIVITY).roundToInt()
+                    val dy = ((event.rawY - downRawY) * RESIZE_SENSITIVITY).roundToInt()
                     val maxWidth = resources.displayMetrics.widthPixels
                     val maxHeight = resources.displayMetrics.heightPixels
-                    lp.width = (lp.width + dx)
+                    lp.width = (startWidth + dx)
                         .coerceIn(dp(MIN_WIDTH_DP), maxOf(dp(MIN_WIDTH_DP), maxWidth))
-                    lp.height = (lp.height + dy)
+                    lp.height = (startHeight + dy)
                         .coerceIn(dp(MIN_HEIGHT_DP), maxOf(dp(MIN_HEIGHT_DP), maxHeight))
                     clampPosition(lp)
                     requestWindowUpdate(lp)
@@ -409,6 +419,7 @@ class FloatingTrayService : Service() {
         private const val MIN_HEIGHT_DP = 80
         private const val MAX_HEIGHT_DP = 300
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
+        private const val RESIZE_SENSITIVITY = 1.65f
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
