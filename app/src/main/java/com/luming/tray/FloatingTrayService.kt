@@ -26,10 +26,13 @@ class FloatingTrayService : Service() {
     private var balanceText: TextView? = null
     private var detailText: TextView? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var layoutUpdateScheduled = false
+    private var gestureActive = false
+    private var lastRenderedSignature: String? = null
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
-            renderStats()
+            if (!gestureActive) renderStats()
             handler.postDelayed(this, 1_000L)
         }
     }
@@ -49,7 +52,7 @@ class FloatingTrayService : Service() {
         if (rootView == null) {
             showOverlay(config)
         }
-        renderStats()
+        renderStats(force = true)
         return START_STICKY
     }
 
@@ -63,6 +66,7 @@ class FloatingTrayService : Service() {
         }
         rootView = null
         params = null
+        layoutUpdateScheduled = false
         super.onDestroy()
     }
 
@@ -156,6 +160,7 @@ class FloatingTrayService : Service() {
             height,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -191,6 +196,7 @@ class FloatingTrayService : Service() {
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    gestureActive = true
                     startX = lp.x
                     startY = lp.y
                     downRawX = event.rawX
@@ -202,11 +208,13 @@ class FloatingTrayService : Service() {
                     lp.x = startX + (event.rawX - downRawX).roundToInt()
                     lp.y = startY + (event.rawY - downRawY).roundToInt()
                     clampPosition(lp)
-                    updateLayout(lp)
+                    scheduleLayoutUpdate(lp)
                     true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    gestureActive = false
+                    applyLayoutNow(lp)
                     persistGeometry(lp)
                     true
                 }
@@ -225,6 +233,7 @@ class FloatingTrayService : Service() {
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    gestureActive = true
                     startWidth = lp.width
                     startHeight = lp.height
                     downRawX = event.rawX
@@ -240,11 +249,13 @@ class FloatingTrayService : Service() {
                     lp.height = (startHeight + (event.rawY - downRawY).roundToInt())
                         .coerceIn(dp(MIN_HEIGHT_DP), maxOf(dp(MIN_HEIGHT_DP), maxHeight))
                     clampPosition(lp)
-                    updateLayout(lp)
+                    scheduleLayoutUpdate(lp)
                     true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    gestureActive = false
+                    applyLayoutNow(lp)
                     persistGeometry(lp)
                     true
                 }
@@ -254,13 +265,56 @@ class FloatingTrayService : Service() {
         }
     }
 
-    private fun renderStats() {
+    /**
+     * WindowManager.updateViewLayout is a Binder/window transaction. On high-refresh-rate
+     * phones ACTION_MOVE can arrive faster than those transactions finish, which creates a
+     * visible queue and makes the overlay trail behind the finger. Coalesce move events to
+     * one WindowManager update per display frame and always use the newest coordinates.
+     */
+    private fun scheduleLayoutUpdate(lp: WindowManager.LayoutParams) {
+        if (layoutUpdateScheduled) return
+        layoutUpdateScheduled = true
+        val view = rootView ?: run {
+            layoutUpdateScheduled = false
+            return
+        }
+        view.postOnAnimation {
+            layoutUpdateScheduled = false
+            applyLayoutNow(lp)
+        }
+    }
+
+    private fun applyLayoutNow(lp: WindowManager.LayoutParams) {
+        val view = rootView ?: return
+        try {
+            windowManager.updateViewLayout(view, lp)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun renderStats(force: Boolean = false) {
         val stats = TrayStore.loadStats(this)
         val config = TrayStore.loadConfig(this)
         if (!config.floatingEnabled) {
             stopSelf()
             return
         }
+
+        val signature = if (stats == null) {
+            "null:${config.balanceAlertThreshold}"
+        } else {
+            listOf(
+                stats.balance,
+                stats.todayCost,
+                stats.totalTokens,
+                stats.requests,
+                stats.rpm,
+                stats.tpm,
+                config.balanceAlertThreshold
+            ).joinToString("|")
+        }
+        if (!force && signature == lastRenderedSignature) return
+        lastRenderedSignature = signature
 
         if (stats == null) {
             balanceText?.text = "余额 --"
@@ -294,14 +348,6 @@ class FloatingTrayService : Service() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
         )
-    }
-
-    private fun updateLayout(lp: WindowManager.LayoutParams) {
-        val view = rootView ?: return
-        try {
-            windowManager.updateViewLayout(view, lp)
-        } catch (_: Exception) {
-        }
     }
 
     private fun clampPosition(lp: WindowManager.LayoutParams) {
