@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -26,9 +27,10 @@ class FloatingTrayService : Service() {
     private var balanceText: TextView? = null
     private var detailText: TextView? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var layoutUpdateScheduled = false
     private var gestureActive = false
     private var lastRenderedSignature: String? = null
+    private var lastWindowUpdateAt = 0L
+    private var pendingWindowUpdate: Runnable? = null
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -58,6 +60,7 @@ class FloatingTrayService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(refreshRunnable)
+        cancelPendingWindowUpdate()
         rootView?.let {
             try {
                 windowManager.removeView(it)
@@ -66,7 +69,6 @@ class FloatingTrayService : Service() {
         }
         rootView = null
         params = null
-        layoutUpdateScheduled = false
         super.onDestroy()
     }
 
@@ -82,6 +84,7 @@ class FloatingTrayService : Service() {
                 setStroke(dp(1), Color.argb(170, 205, 214, 220))
             }
             elevation = dp(8).toFloat()
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
         }
 
         val header = LinearLayout(this).apply {
@@ -167,6 +170,7 @@ class FloatingTrayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = config.floatingX
             y = config.floatingY
+            windowAnimations = 0
         }
 
         clampPosition(lp)
@@ -188,33 +192,36 @@ class FloatingTrayService : Service() {
     }
 
     private fun attachDrag(handle: View, lp: WindowManager.LayoutParams) {
-        var startX = 0
-        var startY = 0
-        var downRawX = 0f
-        var downRawY = 0f
+        var lastRawX = 0f
+        var lastRawY = 0f
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
-                    startX = lp.x
-                    startY = lp.y
-                    downRawX = event.rawX
-                    downRawY = event.rawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - downRawX).roundToInt()
-                    lp.y = startY + (event.rawY - downRawY).roundToInt()
-                    clampPosition(lp)
-                    scheduleLayoutUpdate(lp)
+                    val dx = (event.rawX - lastRawX).roundToInt()
+                    val dy = (event.rawY - lastRawY).roundToInt()
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+
+                    if (dx != 0 || dy != 0) {
+                        lp.x += dx
+                        lp.y += dy
+                        clampPosition(lp)
+                        requestWindowUpdate(lp)
+                    }
                     true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
-                    applyLayoutNow(lp)
+                    flushWindowUpdate(lp)
                     persistGeometry(lp)
                     true
                 }
@@ -225,37 +232,38 @@ class FloatingTrayService : Service() {
     }
 
     private fun attachResize(handle: View, lp: WindowManager.LayoutParams) {
-        var startWidth = 0
-        var startHeight = 0
-        var downRawX = 0f
-        var downRawY = 0f
+        var lastRawX = 0f
+        var lastRawY = 0f
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
-                    startWidth = lp.width
-                    startHeight = lp.height
-                    downRawX = event.rawX
-                    downRawY = event.rawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - lastRawX).roundToInt()
+                    val dy = (event.rawY - lastRawY).roundToInt()
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+
                     val maxWidth = resources.displayMetrics.widthPixels
                     val maxHeight = resources.displayMetrics.heightPixels
-                    lp.width = (startWidth + (event.rawX - downRawX).roundToInt())
+                    lp.width = (lp.width + dx)
                         .coerceIn(dp(MIN_WIDTH_DP), maxOf(dp(MIN_WIDTH_DP), maxWidth))
-                    lp.height = (startHeight + (event.rawY - downRawY).roundToInt())
+                    lp.height = (lp.height + dy)
                         .coerceIn(dp(MIN_HEIGHT_DP), maxOf(dp(MIN_HEIGHT_DP), maxHeight))
                     clampPosition(lp)
-                    scheduleLayoutUpdate(lp)
+                    requestWindowUpdate(lp)
                     true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
-                    applyLayoutNow(lp)
+                    flushWindowUpdate(lp)
                     persistGeometry(lp)
                     true
                 }
@@ -266,25 +274,44 @@ class FloatingTrayService : Service() {
     }
 
     /**
-     * WindowManager.updateViewLayout is a Binder/window transaction. On high-refresh-rate
-     * phones ACTION_MOVE can arrive faster than those transactions finish, which creates a
-     * visible queue and makes the overlay trail behind the finger. Coalesce move events to
-     * one WindowManager update per display frame and always use the newest coordinates.
+     * OEM overlay windows can visibly trail the finger if every high-frequency MOVE event
+     * becomes a WindowManager transaction. Keep an immediate leading-edge update, then cap
+     * the remaining transactions to roughly one per 8 ms while always applying the newest
+     * coordinates. This avoids both Binder queues and the extra frame of latency caused by
+     * postOnAnimation on some high-refresh-rate phones.
      */
-    private fun scheduleLayoutUpdate(lp: WindowManager.LayoutParams) {
-        if (layoutUpdateScheduled) return
-        layoutUpdateScheduled = true
-        val view = rootView ?: run {
-            layoutUpdateScheduled = false
+    private fun requestWindowUpdate(lp: WindowManager.LayoutParams) {
+        val now = SystemClock.uptimeMillis()
+        val elapsed = now - lastWindowUpdateAt
+        if (elapsed >= WINDOW_UPDATE_INTERVAL_MS && pendingWindowUpdate == null) {
+            lastWindowUpdateAt = now
+            applyWindowUpdate(lp)
             return
         }
-        view.postOnAnimation {
-            layoutUpdateScheduled = false
-            applyLayoutNow(lp)
+
+        if (pendingWindowUpdate != null) return
+        val delay = (WINDOW_UPDATE_INTERVAL_MS - elapsed).coerceAtLeast(1L)
+        val runnable = Runnable {
+            pendingWindowUpdate = null
+            lastWindowUpdateAt = SystemClock.uptimeMillis()
+            applyWindowUpdate(lp)
         }
+        pendingWindowUpdate = runnable
+        handler.postDelayed(runnable, delay)
     }
 
-    private fun applyLayoutNow(lp: WindowManager.LayoutParams) {
+    private fun flushWindowUpdate(lp: WindowManager.LayoutParams) {
+        cancelPendingWindowUpdate()
+        lastWindowUpdateAt = SystemClock.uptimeMillis()
+        applyWindowUpdate(lp)
+    }
+
+    private fun cancelPendingWindowUpdate() {
+        pendingWindowUpdate?.let(handler::removeCallbacks)
+        pendingWindowUpdate = null
+    }
+
+    private fun applyWindowUpdate(lp: WindowManager.LayoutParams) {
         val view = rootView ?: return
         try {
             windowManager.updateViewLayout(view, lp)
@@ -381,6 +408,7 @@ class FloatingTrayService : Service() {
         private const val MAX_WIDTH_DP = 420
         private const val MIN_HEIGHT_DP = 80
         private const val MAX_HEIGHT_DP = 300
+        private const val WINDOW_UPDATE_INTERVAL_MS = 8L
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
