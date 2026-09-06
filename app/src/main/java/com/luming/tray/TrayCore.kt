@@ -8,7 +8,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.os.Build
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 data class UsageStats(
@@ -22,6 +25,12 @@ data class UsageStats(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+data class TrayConfig(
+    val baseUrl: String = "https://lmyanyu.com/v1",
+    val apiKey: String = "",
+    val accessToken: String = ""
+)
+
 object TrayStore {
     private const val NAME = "luming_tray"
     private fun prefs(context: Context) = context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -32,6 +41,9 @@ object TrayStore {
             .putString("todayCost", stats.todayCost?.toString())
             .putString("requests", stats.requests?.toString())
             .putString("totalTokens", stats.totalTokens?.toString())
+            .putString("inputTokens", stats.inputTokens?.toString())
+            .putString("outputTokens", stats.outputTokens?.toString())
+            .putString("avgResponseSeconds", stats.avgResponseSeconds?.toString())
             .putLong("updatedAt", stats.updatedAt)
             .apply()
     }
@@ -45,9 +57,36 @@ object TrayStore {
             todayCost = p.getString("todayCost", null)?.toDoubleOrNull(),
             requests = p.getString("requests", null)?.toLongOrNull(),
             totalTokens = p.getString("totalTokens", null)?.toLongOrNull(),
+            inputTokens = p.getString("inputTokens", null)?.toLongOrNull(),
+            outputTokens = p.getString("outputTokens", null)?.toLongOrNull(),
+            avgResponseSeconds = p.getString("avgResponseSeconds", null)?.toDoubleOrNull(),
             updatedAt = updatedAt
         )
     }
+
+    fun saveConfig(context: Context, config: TrayConfig) {
+        prefs(context).edit()
+            .putString("baseUrl", config.baseUrl.trim().ifBlank { TrayConfig().baseUrl })
+            .putString("apiKey", config.apiKey.trim())
+            .putString("accessToken", config.accessToken.trim())
+            .apply()
+    }
+
+    fun loadConfig(context: Context): TrayConfig {
+        val p = prefs(context)
+        return TrayConfig(
+            baseUrl = p.getString("baseUrl", null)?.takeIf { it.isNotBlank() } ?: TrayConfig().baseUrl,
+            apiKey = p.getString("apiKey", "") ?: "",
+            accessToken = p.getString("accessToken", "") ?: ""
+        )
+    }
+
+    fun saveLastMessage(context: Context, message: String) {
+        prefs(context).edit().putString("lastMessage", message).apply()
+    }
+
+    fun loadLastMessage(context: Context): String =
+        prefs(context).getString("lastMessage", "") ?: ""
 }
 
 object TrayNotification {
@@ -76,16 +115,42 @@ object TrayNotification {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val refresh = PendingIntent.getBroadcast(
+            context,
+            1,
+            Intent(context, RefreshReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val title = stats?.balance?.let { "LuMing · 余额 ${money(it)}" } ?: "LuMing Tray"
         val text = stats?.let {
             "今日 ${it.todayCost?.let(::money) ?: "--"} · ${it.requests ?: "--"} 次 · ${it.totalTokens?.let(::tokens) ?: "--"} Token"
-        } ?: "托盘已启动，等待接入统计接口"
+        } ?: "托盘已启动，等待首次刷新"
+
+        val expanded = if (stats != null) {
+            buildString {
+                append("余额 ${stats.balance?.let(::money) ?: "--"}")
+                append("\n今日 ${stats.todayCost?.let(::money) ?: "--"} · ${stats.requests ?: "--"} 次")
+                append("\nToken ${stats.totalTokens?.let(::tokens) ?: "--"}")
+                if (stats.inputTokens != null || stats.outputTokens != null) {
+                    append("（入 ${stats.inputTokens?.let(::tokens) ?: "--"} / 出 ${stats.outputTokens?.let(::tokens) ?: "--"}）")
+                }
+                if (stats.avgResponseSeconds != null) {
+                    append("\n平均响应 ${seconds(stats.avgResponseSeconds)}")
+                }
+                append("\n更新 ${time(stats.updatedAt)}")
+            }
+        } else {
+            "打开 LuMing Tray，填写 API Key 或控制台 Access Token 后刷新。"
+        }
 
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(expanded))
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_popup_sync), "刷新", refresh).build())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -94,11 +159,18 @@ object TrayNotification {
         manager.notify(NOTIFICATION_ID, notification)
     }
 
-    fun money(value: Double): String = String.format(Locale.US, "$%.4f", value).trimEnd('0').trimEnd('.')
+    fun money(value: Double): String =
+        String.format(Locale.US, "$%.4f", value).trimEnd('0').trimEnd('.')
 
     fun tokens(value: Long): String = when {
         value >= 1_000_000 -> String.format(Locale.US, "%.2fM", value / 1_000_000.0).trimEnd('0').trimEnd('.')
         value >= 1_000 -> String.format(Locale.US, "%.1fK", value / 1_000.0).trimEnd('0').trimEnd('.')
         else -> value.toString()
     }
+
+    fun seconds(value: Double): String =
+        if (value >= 10) String.format(Locale.US, "%.1fs", value) else String.format(Locale.US, "%.2fs", value)
+
+    private fun time(timestamp: Long): String =
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
 }

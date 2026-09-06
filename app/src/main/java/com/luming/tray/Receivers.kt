@@ -6,7 +6,11 @@ import android.content.Intent
 
 class RefreshReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        TrayNotification.show(context)
+        val pending = goAsync()
+        UsageClient.refresh(context) {
+            TrayNotification.show(context)
+            pending.finish()
+        }
     }
 }
 
@@ -14,6 +18,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
             TrayNotification.show(context)
+            TrayScheduler.ensure(context)
         }
     }
 }

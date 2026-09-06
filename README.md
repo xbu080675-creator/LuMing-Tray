@@ -1,37 +1,43 @@
 # LuMing Tray
 
-Android 手机端 LuMing API 用量托盘。
+Android 通知栏 API 用量托盘。项目不依赖 Android Studio，本仓库通过 GitHub Actions 自动编译 APK。
 
-## 当前版本
+## M0.2
 
-M0.1：先验证 Android APK、常驻通知和 Quick Settings 快捷磁贴链路。
+- 常驻通知显示余额、今日消费、请求数和 Token
+- 展开通知显示输入 / 输出 Token、平均响应时间、最后更新时间
+- Quick Settings 磁贴点按刷新
+- App 内本地保存 API 基地址、API Key、控制台 Access Token
+- 自动探测常见 One API / New API 统计接口
+- 30 分钟后台刷新
+- GitHub Actions 自动生成 debug APK
 
-已完成：
+默认 API 基地址：
 
-- 原生 Android APK
-- 常驻通知栏卡片
-- Android 13+ 通知权限申请
-- Quick Settings「LuMing API」磁贴
-- 开机后恢复托盘通知
-- GitHub Actions 自动编译 APK
+```text
+https://lmyanyu.com/v1
+```
 
-下一步：
+### 凭据说明
 
-- 接入 LuMing 后台真实统计接口
-- 展示余额、今日消费、请求数、输入/输出 Token、平均响应
-- 15 分钟后台刷新 + 手动刷新
-- 根据实际返回 JSON 做字段映射
+凭据只写入 Android 应用的私有 `SharedPreferences`，不会提交到 GitHub，应用也已关闭 Android 备份。不要把 API Key 或 Access Token 写进仓库。
+
+在兼容的 One API / New API 部署上：
+
+- `API Key`（通常是 `sk-...`）可用于兼容 billing 接口，主要作为余额兜底。
+- `控制台 Access Token` 用于 `/api/user/self`、`/api/user/dashboard` 和 `/api/log/self/`，可以拿到更完整的今日统计。
+
+如果站点做了自定义接口，App 会保留上一次成功数据，并在“接口状态”里显示探测结果。
 
 ## 编译
 
-每次推送到 `main` 都会触发 GitHub Actions。
+推送到 `main` 后，GitHub Actions 会自动执行：
 
-编译成功后进入：
+```text
+Android SDK 35
+JDK 17
+Gradle 8.9
+assembleDebug
+```
 
-`Actions -> Build Android APK -> 对应运行 -> Artifacts -> LuMing-Tray-debug`
-
-无需本地 Android Studio。
-
-## 安全
-
-仓库中不要提交 API Key。后续接入认证时，密钥只保存在 App 私有存储中。
+构建完成后在 **Actions → 对应任务 → Artifacts** 下载 APK。
