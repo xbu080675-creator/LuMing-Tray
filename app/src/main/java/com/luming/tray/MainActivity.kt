@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var apiKeyField: EditText
     private lateinit var accessTokenField: EditText
     private lateinit var refreshButton: Button
+    private var autoRefreshInFlight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,6 +45,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         renderState()
+        maybeAutoRefresh()
     }
 
     private fun buildUi(): View {
@@ -92,6 +94,13 @@ class MainActivity : Activity() {
         }
         root.addView(statusText, matchWrap())
 
+        root.addView(TextView(this).apply {
+            text = "自动读取已开启：打开 App 会自动拉取最新数据；后台仍按计划定时更新通知栏。"
+            textSize = 12.5f
+            setTextColor(Color.rgb(86, 96, 110))
+            setPadding(dp(4), dp(10), dp(4), 0)
+        })
+
         root.addView(sectionTitle("连接设置"))
 
         baseUrlField = editField("API 基地址，例如 https://lmyanyu.com/v1")
@@ -127,23 +136,23 @@ class MainActivity : Activity() {
         root.addView(accessTokenField, matchHeight(54))
 
         root.addView(TextView(this).apply {
-            text = "推荐直接使用“网页登录并授权统计”。M0.4 会从网页登录会话中读取站点自己的访问令牌，并直接调用仪表盘统计接口；令牌失效时可用刷新令牌自动续期。API Key 和手动 Access Token 仍作为其他兼容站点的兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
+            text = "推荐直接使用“网页登录并授权统计”。登录成功后 M0.5 会自动读取并保存站点令牌，以后打开 App 无需再点刷新。API Key 和手动 Access Token 继续作为兼容兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             setPadding(dp(4), dp(10), dp(4), 0)
         })
 
         refreshButton = Button(this).apply {
-            text = "保存并刷新"
+            text = "保存并立即读取"
             isAllCaps = false
             setOnClickListener { saveAndRefresh() }
         }
         root.addView(refreshButton, matchHeight(52).apply { topMargin = dp(18) })
 
         root.addView(Button(this).apply {
-            text = "仅刷新"
+            text = "手动读取（备用）"
             isAllCaps = false
-            setOnClickListener { refreshNow() }
+            setOnClickListener { refreshNow(manual = true) }
         }, matchHeight(48).apply { topMargin = dp(8) })
 
         diagnosticText = TextView(this).apply {
@@ -155,7 +164,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "M0.4 · Sub2API 仪表盘适配 / 网页令牌续期 / DOM 直读兜底"
+            text = "M0.5 · 自动读取 / 登录后自动接管 / 后台定时更新"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -193,13 +202,38 @@ class MainActivity : Activity() {
         }
         saveFields(baseUrl)
         TrayScheduler.ensure(this)
-        refreshNow()
+        refreshNow(manual = true)
     }
 
-    private fun refreshNow() {
-        refreshButton.isEnabled = false
-        diagnosticText.text = "正在连接统计接口…"
+    private fun maybeAutoRefresh() {
+        if (autoRefreshInFlight) return
+        val config = TrayStore.loadConfig(this)
+        val hasCredential = config.webAuthToken.isNotBlank() ||
+            config.webRefreshToken.isNotBlank() ||
+            config.consoleCookie.isNotBlank() ||
+            config.accessToken.isNotBlank() ||
+            config.apiKey.isNotBlank()
+        if (!hasCredential) return
+
+        val stats = TrayStore.loadStats(this)
+        val stale = stats == null || System.currentTimeMillis() - stats.updatedAt >= AUTO_REFRESH_MIN_AGE_MS
+        if (!stale) return
+
+        autoRefreshInFlight = true
+        diagnosticText.text = "自动读取最新统计…"
         UsageClient.refresh(this) { result ->
+            autoRefreshInFlight = false
+            renderState(result.message)
+        }
+    }
+
+    private fun refreshNow(manual: Boolean) {
+        if (autoRefreshInFlight) return
+        autoRefreshInFlight = true
+        refreshButton.isEnabled = false
+        diagnosticText.text = if (manual) "正在读取最新统计…" else "自动读取最新统计…"
+        UsageClient.refresh(this) { result ->
+            autoRefreshInFlight = false
             refreshButton.isEnabled = true
             renderState(result.message)
         }
@@ -208,7 +242,7 @@ class MainActivity : Activity() {
     private fun renderState(message: String? = null) {
         val config = TrayStore.loadConfig(this)
         loginStateText.text = when {
-            config.webAuthToken.isNotBlank() -> "网页登录：已授权（站点令牌可后台续期）"
+            config.webAuthToken.isNotBlank() -> "网页登录：已授权（以后自动读取）"
             config.consoleCookie.isNotBlank() -> "网页登录：已保存 Cookie（兼容模式）"
             else -> "网页登录：未授权"
         }
@@ -238,7 +272,7 @@ class MainActivity : Activity() {
 
         val last = message ?: TrayStore.loadLastMessage(this)
         diagnosticText.text = if (last.isBlank()) {
-            "等待首次真实数据刷新。"
+            "等待首次真实数据读取。"
         } else {
             "接口状态：$last"
         }
@@ -314,5 +348,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_NOTIFICATION = 10
+        private const val AUTO_REFRESH_MIN_AGE_MS = 30_000L
     }
 }

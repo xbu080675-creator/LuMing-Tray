@@ -23,6 +23,7 @@ import kotlin.math.roundToLong
 class LoginActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var statusText: TextView
+    private var captureInProgress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,7 +61,7 @@ class LoginActivity : Activity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "在下方网页正常登录。看到控制台后，点底部“完成登录并读取数据”。App 不读取或保存你的账号密码。"
+            text = "正常登录即可。进入控制台后 App 会自动读取并保存统计授权，不需要再手动点刷新。下方按钮只作为异常时的备用。"
             textSize = 12.5f
             setTextColor(Color.rgb(92, 102, 115))
             setPadding(0, dp(6), 0, dp(8))
@@ -79,16 +80,17 @@ class LoginActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
-            settings.userAgentString = settings.userAgentString + " LuMing-Tray/0.4"
+            settings.userAgentString = settings.userAgentString + " LuMing-Tray/0.5"
             webChromeClient = WebChromeClient()
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     statusText.text = when {
-                        url.isNullOrBlank() -> "网页已加载"
-                        url.contains("/dashboard") -> "已进入控制台，可以点底部按钮读取数据。"
-                        else -> "当前页面：${url.take(80)}"
+                        url.isNullOrBlank() -> "网页已加载，等待登录…"
+                        url.contains("/login") -> "请正常登录，成功后会自动读取。"
+                        else -> "网页已进入登录后页面，正在自动识别统计授权…"
                     }
+                    scheduleAutoCapture()
                 }
             }
         }
@@ -109,10 +111,10 @@ class LoginActivity : Activity() {
         )
 
         root.addView(Button(this).apply {
-            text = "完成登录并读取数据"
+            text = "手动读取（备用）"
             isAllCaps = false
             gravity = Gravity.CENTER
-            setOnClickListener { captureSessionAndRefresh() }
+            setOnClickListener { captureSessionAndRefresh(autoTriggered = false) }
         }, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             dp(52)
@@ -126,7 +128,18 @@ class LoginActivity : Activity() {
         webView.loadUrl("$root/login")
     }
 
-    private fun captureSessionAndRefresh() {
+    private fun scheduleAutoCapture() {
+        webView.postDelayed({
+            if (!isFinishing && !captureInProgress) {
+                captureSessionAndRefresh(autoTriggered = true)
+            }
+        }, 1000L)
+    }
+
+    private fun captureSessionAndRefresh(autoTriggered: Boolean) {
+        if (captureInProgress) return
+        captureInProgress = true
+
         val config = TrayStore.loadConfig(this)
         val root = siteRoot(config.baseUrl)
         val cookieManager = CookieManager.getInstance()
@@ -170,9 +183,18 @@ class LoginActivity : Activity() {
                 ?.trim()
                 ?.toLongOrNull() ?: 0L
             val bodyText = payload?.optString("body_text").orEmpty()
+            val dashboardVisible = looksLikeDashboard(bodyText)
+
+            if (autoTriggered && authToken.isBlank() && !dashboardVisible) {
+                captureInProgress = false
+                return@evaluateJavascript
+            }
 
             if (authToken.isBlank() && cookie.isBlank()) {
-                statusText.text = "没有检测到网页登录会话。请确认已经进入控制台，再重试。"
+                captureInProgress = false
+                if (!autoTriggered) {
+                    statusText.text = "没有检测到网页登录会话。请确认已经登录，再重试。"
+                }
                 return@evaluateJavascript
             }
 
@@ -187,35 +209,37 @@ class LoginActivity : Activity() {
             )
 
             statusText.text = if (authToken.isNotBlank()) {
-                "已获取网页登录令牌，正在读取仪表盘统计…"
+                "登录成功，正在自动读取仪表盘统计…"
             } else {
-                "已获取 Cookie，正在尝试读取统计…"
+                "已进入仪表盘，正在直接读取页面统计…"
             }
 
             UsageClient.refresh(this) { result ->
                 if (result.success) {
-                    Toast.makeText(this, "网页登录已保存，统计刷新成功", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "已自动接管统计，后续无需手动刷新", Toast.LENGTH_SHORT).show()
                     setResult(RESULT_OK)
                     finish()
                     return@refresh
                 }
 
-                // 最后一层兜底：既然 WebView 已经把仪表盘渲染出来，就直接读取页面文字。
-                // 这不是 OCR，不需要截图，也不会读取提示词或模型响应正文。
                 val pageStats = parseDashboardText(bodyText)
                 if (pageStats != null) {
                     TrayStore.saveStats(this, pageStats)
-                    TrayStore.saveLastMessage(this, "网页仪表盘直读 OK（接口兜底）")
+                    TrayStore.saveLastMessage(this, "网页仪表盘自动直读 OK")
                     TrayNotification.show(this, pageStats)
-                    Toast.makeText(this, "已从网页仪表盘读取统计", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "已自动读取仪表盘统计", Toast.LENGTH_SHORT).show()
                     setResult(RESULT_OK)
                     finish()
                 } else {
-                    statusText.text = "网页登录成功，但统计读取失败：${result.message}"
+                    captureInProgress = false
+                    statusText.text = "网页登录成功，但自动读取失败：${result.message}"
                 }
             }
         }
     }
+
+    private fun looksLikeDashboard(text: String): Boolean =
+        text.contains("今日请求") && (text.contains("今日消费") || text.contains("今日 Token"))
 
     private fun parseDashboardText(text: String): UsageStats? {
         if (text.isBlank()) return null
