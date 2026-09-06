@@ -28,7 +28,8 @@ data class UsageStats(
 data class TrayConfig(
     val baseUrl: String = "https://lmyanyu.com/v1",
     val apiKey: String = "",
-    val accessToken: String = ""
+    val accessToken: String = "",
+    val consoleCookie: String = ""
 )
 
 object TrayStore {
@@ -69,6 +70,7 @@ object TrayStore {
             .putString("baseUrl", config.baseUrl.trim().ifBlank { TrayConfig().baseUrl })
             .putString("apiKey", config.apiKey.trim())
             .putString("accessToken", config.accessToken.trim())
+            .putString("consoleCookie", config.consoleCookie.trim())
             .apply()
     }
 
@@ -77,7 +79,8 @@ object TrayStore {
         return TrayConfig(
             baseUrl = p.getString("baseUrl", null)?.takeIf { it.isNotBlank() } ?: TrayConfig().baseUrl,
             apiKey = p.getString("apiKey", "") ?: "",
-            accessToken = p.getString("accessToken", "") ?: ""
+            accessToken = p.getString("accessToken", "") ?: "",
+            consoleCookie = p.getString("consoleCookie", "") ?: ""
         )
     }
 
@@ -141,7 +144,7 @@ object TrayNotification {
                 append("\n更新 ${time(stats.updatedAt)}")
             }
         } else {
-            "打开 LuMing Tray，填写 API Key 或控制台 Access Token 后刷新。"
+            "打开 LuMing Tray，网页登录或填写凭据后刷新。"
         }
 
         val notification = Notification.Builder(context, CHANNEL_ID)

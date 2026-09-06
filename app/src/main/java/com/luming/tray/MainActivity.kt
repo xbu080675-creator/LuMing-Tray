@@ -2,6 +2,7 @@ package com.luming.tray
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -12,6 +13,7 @@ import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -24,6 +26,7 @@ import java.util.Locale
 class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var diagnosticText: TextView
+    private lateinit var loginStateText: TextView
     private lateinit var baseUrlField: EditText
     private lateinit var apiKeyField: EditText
     private lateinit var accessTokenField: EditText
@@ -50,6 +53,22 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(28), dp(20), dp(32))
+            setOnApplyWindowInsetsListener { view, insets ->
+                val top = if (Build.VERSION.SDK_INT >= 30) {
+                    insets.getInsets(WindowInsets.Type.statusBars()).top
+                } else {
+                    @Suppress("DEPRECATION")
+                    insets.systemWindowInsetTop
+                }
+                val bottom = if (Build.VERSION.SDK_INT >= 30) {
+                    insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    insets.systemWindowInsetBottom
+                }
+                view.setPadding(dp(20), dp(20) + top, dp(20), dp(24) + bottom)
+                insets
+            }
         }
 
         root.addView(TextView(this).apply {
@@ -81,11 +100,34 @@ class MainActivity : Activity() {
         apiKeyField = secretField("API Key（sk-...，可选）")
         root.addView(apiKeyField, matchHeight(54).apply { topMargin = dp(10) })
 
+        root.addView(Button(this).apply {
+            text = "网页登录并授权统计"
+            isAllCaps = false
+            setOnClickListener {
+                val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
+                if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
+                    diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
+                    return@setOnClickListener
+                }
+                saveFields(baseUrl)
+                startActivity(Intent(this@MainActivity, LoginActivity::class.java))
+            }
+        }, matchHeight(52).apply { topMargin = dp(12) })
+
+        loginStateText = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(Color.rgb(86, 96, 110))
+            setPadding(dp(4), dp(8), dp(4), 0)
+        }
+        root.addView(loginStateText)
+
+        root.addView(sectionTitle("高级选项"))
+
         accessTokenField = secretField("控制台 Access Token（可选）")
-        root.addView(accessTokenField, matchHeight(54).apply { topMargin = dp(10) })
+        root.addView(accessTokenField, matchHeight(54))
 
         root.addView(TextView(this).apply {
-            text = "密钥只保存在本机应用私有数据中，不写入 GitHub。若站点兼容常见 One API / New API 接口，控制台 Access Token 可读取今日请求与 Token；API Key 可作为余额计费兜底。"
+            text = "推荐直接使用“网页登录并授权统计”。App 不保存账号密码，只复用登录成功后的本站 Cookie；API Key 和 Access Token 仍可作为兼容接口兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             setPadding(dp(4), dp(10), dp(4), 0)
@@ -113,7 +155,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "M0.2 · 真实数据接入 / 手动刷新 / 30 分钟后台刷新"
+            text = "M0.3 · 网页登录 Cookie / 状态栏安全区 / 真实数据刷新"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -131,21 +173,26 @@ class MainActivity : Activity() {
         accessTokenField.setText(config.accessToken)
     }
 
+    private fun saveFields(baseUrl: String = baseUrlField.text.toString().trim().trimEnd('/')) {
+        val old = TrayStore.loadConfig(this)
+        TrayStore.saveConfig(
+            this,
+            TrayConfig(
+                baseUrl = baseUrl,
+                apiKey = apiKeyField.text.toString().trim(),
+                accessToken = accessTokenField.text.toString().trim(),
+                consoleCookie = old.consoleCookie
+            )
+        )
+    }
+
     private fun saveAndRefresh() {
         val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
         if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
             diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
             return
         }
-
-        TrayStore.saveConfig(
-            this,
-            TrayConfig(
-                baseUrl = baseUrl,
-                apiKey = apiKeyField.text.toString().trim(),
-                accessToken = accessTokenField.text.toString().trim()
-            )
-        )
+        saveFields(baseUrl)
         TrayScheduler.ensure(this)
         refreshNow()
     }
@@ -160,6 +207,13 @@ class MainActivity : Activity() {
     }
 
     private fun renderState(message: String? = null) {
+        val config = TrayStore.loadConfig(this)
+        loginStateText.text = if (config.consoleCookie.isNotBlank()) {
+            "网页登录：已保存登录会话（失效时重新登录即可）"
+        } else {
+            "网页登录：未授权"
+        }
+
         val stats = TrayStore.loadStats(this)
         statusText.text = if (stats == null) {
             "托盘状态：已就绪\n\n" +

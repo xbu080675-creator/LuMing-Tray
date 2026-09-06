@@ -49,8 +49,8 @@ object UsageClient {
 
     fun refreshBlocking(context: Context): RefreshResult {
         val config = TrayStore.loadConfig(context)
-        if (config.apiKey.isBlank() && config.accessToken.isBlank()) {
-            return RefreshResult(false, TrayStore.loadStats(context), "请先填写 API Key 或控制台 Access Token")
+        if (config.apiKey.isBlank() && config.accessToken.isBlank() && config.consoleCookie.isBlank()) {
+            return RefreshResult(false, TrayStore.loadStats(context), "请先网页登录，或填写 API Key / Access Token")
         }
 
         val root = siteRoot(config.baseUrl)
@@ -65,21 +65,30 @@ object UsageClient {
         var outputTokens: Long? = null
         var avgSeconds: Double? = null
 
-        if (config.accessToken.isNotBlank()) {
-            val accessToken = config.accessToken.removePrefix("Bearer ").trim()
+        val authHeader = config.accessToken
+            .removePrefix("Bearer ")
+            .trim()
+            .takeIf { it.isNotBlank() }
+        val cookie = config.consoleCookie.trim().takeIf { it.isNotBlank() }
 
-            requestJson("$root/api/user/self", accessToken)?.let { response ->
+        if (authHeader != null || cookie != null) {
+            val authName = if (cookie != null) "网页登录" else "Access Token"
+
+            requestJson("$root/api/user/self", authHeader, cookie)?.let { response ->
                 if (response.optBoolean("success", false)) {
                     val data = response.optJSONObject("data")
                     val rawBalance = data?.number("quota", "Quota")
                     balance = quotaToMoney(rawBalance, quotaInfo)
+                    notes += "$authName认证 OK"
                     notes += "余额 OK"
                 } else {
-                    notes += "余额接口：${response.messageOr("未授权")}"
+                    notes += "$authName：${response.messageOr("未授权")}" 
                 }
-            } ?: run { notes += "余额接口不可用" }
+            } ?: run {
+                notes += "$authName接口不可用"
+            }
 
-            val dashboard = requestJson("$root/api/user/dashboard", accessToken)
+            val dashboard = requestJson("$root/api/user/dashboard", authHeader, cookie)
             if (dashboard?.optBoolean("success", false) == true) {
                 val today = todayString()
                 val array = dashboard.optJSONArray("data") ?: JSONArray()
@@ -117,11 +126,9 @@ object UsageClient {
                 notes += "统计接口：${dashboard.messageOr("无数据")}"
             }
 
-            val logStats = fetchTodayLogs(root, accessToken, quotaInfo)
+            val logStats = fetchTodayLogs(root, authHeader, cookie, quotaInfo)
             if (logStats != null) {
                 avgSeconds = logStats.avgResponseSeconds
-
-                // 只有 dashboard 没拿到时才用日志兜底，避免分页上限影响准确计数。
                 if (requests == null) {
                     requests = logStats.requests
                     todayCost = logStats.todayCost
@@ -132,17 +139,17 @@ object UsageClient {
             }
         }
 
-        // 仅有模型 API Key 时，尝试 OpenAI 兼容的 billing 接口。
-        // 它通常只能可靠补余额，今日请求/Token 仍优先使用控制台 Access Token。
         if (config.apiKey.isNotBlank()) {
             val apiKey = config.apiKey.removePrefix("Bearer ").trim()
             val subscription = requestJson(
                 "$apiBase/dashboard/billing/subscription",
-                "Bearer $apiKey"
+                "Bearer $apiKey",
+                null
             )
             val usage = requestJson(
                 "$apiBase/dashboard/billing/usage?start_date=2000-01-01&end_date=2099-12-31",
-                "Bearer $apiKey"
+                "Bearer $apiKey",
+                null
             )
 
             if (balance == null && subscription != null) {
@@ -193,7 +200,7 @@ object UsageClient {
     }
 
     private fun fetchQuotaInfo(root: String): QuotaInfo {
-        val response = requestJson("$root/api/status", null) ?: return QuotaInfo()
+        val response = requestJson("$root/api/status", null, null) ?: return QuotaInfo()
         val data = response.optJSONObject("data") ?: response
         return QuotaInfo(
             quotaPerUnit = data.number("quota_per_unit", "QuotaPerUnit")
@@ -215,7 +222,12 @@ object UsageClient {
         val avgResponseSeconds: Double?
     )
 
-    private fun fetchTodayLogs(root: String, accessToken: String, quotaInfo: QuotaInfo): LogSummary? {
+    private fun fetchTodayLogs(
+        root: String,
+        authorization: String?,
+        cookie: String?,
+        quotaInfo: QuotaInfo
+    ): LogSummary? {
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -233,11 +245,9 @@ object UsageClient {
         var elapsedCount = 0L
         var gotAnyResponse = false
 
-        // 常见 One API / New API 每页 10 条。最多取 100 条，
-        // 对日常个人用量足够；若超过则 dashboard 的请求/Token 仍是主数据源。
         for (page in 0 until 10) {
             val url = "$root/api/log/self/?p=$page&type=2&start_timestamp=$start&end_timestamp=$end"
-            val response = requestJson(url, accessToken) ?: break
+            val response = requestJson(url, authorization, cookie) ?: break
             gotAnyResponse = true
             if (!response.optBoolean("success", false)) break
             val data = response.optJSONArray("data") ?: break
@@ -254,7 +264,6 @@ object UsageClient {
 
                 val rawElapsed = item.number("elapsed_time", "ElapsedTime")
                 if (rawElapsed != null && rawElapsed >= 0) {
-                    // one-api-pro 的 elapsed_time 通常是秒；若某分支返回毫秒，做数量级兼容。
                     elapsed += if (rawElapsed > 10_000) rawElapsed / 1000.0 else rawElapsed
                     elapsedCount++
                 }
@@ -281,8 +290,6 @@ object UsageClient {
             displayType == "USD" ||
             displayType == "CURRENCY"
 
-        // 不同分支有的返回原始 quota，有的已经返回金额。
-        // 小数值优先视为已转换金额；大值按 quota_per_unit 换算。
         return if ((isCurrency || info.quotaPerUnit > 1.0) && raw >= 1_000.0) {
             raw / info.quotaPerUnit
         } else {
@@ -290,19 +297,22 @@ object UsageClient {
         }
     }
 
-    private fun requestJson(url: String, authorization: String?): JSONObject? {
+    private fun requestJson(url: String, authorization: String?, cookie: String?): JSONObject? {
         return try {
             val builder = Request.Builder()
                 .url(url)
                 .get()
                 .header("Accept", "application/json")
-                .header("User-Agent", "LuMing-Tray/0.2")
+                .header("User-Agent", "LuMing-Tray/0.3")
             if (!authorization.isNullOrBlank()) {
                 builder.header("Authorization", authorization)
             }
+            if (!cookie.isNullOrBlank()) {
+                builder.header("Cookie", cookie)
+            }
             client.newCall(builder.build()).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful || body.isBlank()) return null
+                if (body.isBlank()) return null
                 JSONObject(body)
             }
         } catch (_: Exception) {
@@ -348,7 +358,7 @@ object UsageClient {
     }
 
     private fun JSONObject.messageOr(fallback: String): String =
-        string("message", "error")?.take(48) ?: fallback
+        string("message", "error")?.take(72) ?: fallback
 }
 
 class UsageWorker(
@@ -357,7 +367,9 @@ class UsageWorker(
 ) : Worker(appContext, params) {
     override fun doWork(): Result {
         val config = TrayStore.loadConfig(applicationContext)
-        if (config.apiKey.isBlank() && config.accessToken.isBlank()) return Result.success()
+        if (config.apiKey.isBlank() && config.accessToken.isBlank() && config.consoleCookie.isBlank()) {
+            return Result.success()
+        }
         UsageClient.refreshBlocking(applicationContext)
         return Result.success()
     }
