@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var apiKeyField: EditText
     private lateinit var accessTokenField: EditText
     private lateinit var refreshButton: Button
+    private lateinit var realtimeButton: Button
     private var autoRefreshInFlight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +46,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         renderState()
+        syncRealtimeService()
         maybeAutoRefresh()
     }
 
@@ -94,8 +96,26 @@ class MainActivity : Activity() {
         }
         root.addView(statusText, matchWrap())
 
+        realtimeButton = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener { toggleRealtime() }
+        }
+        root.addView(realtimeButton, matchHeight(50).apply { topMargin = dp(12) })
+
+        root.addView(Button(this).apply {
+            text = "充值"
+            isAllCaps = false
+            setOnClickListener {
+                val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
+                if (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) {
+                    saveFields(baseUrl)
+                }
+                startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
+            }
+        }, matchHeight(50).apply { topMargin = dp(8) })
+
         root.addView(TextView(this).apply {
-            text = "自动读取已开启：打开 App 会自动拉取最新数据；后台仍按计划定时更新通知栏。"
+            text = "近实时模式：亮屏时约 10 秒检查一次；长期无变化会自动降频。熄屏后从约 60 秒开始，并逐步退到 2～5 分钟，减少耗电和无意义请求。"
             textSize = 12.5f
             setTextColor(Color.rgb(86, 96, 110))
             setPadding(dp(4), dp(10), dp(4), 0)
@@ -136,7 +156,7 @@ class MainActivity : Activity() {
         root.addView(accessTokenField, matchHeight(54))
 
         root.addView(TextView(this).apply {
-            text = "推荐直接使用“网页登录并授权统计”。登录成功后 M0.5 会自动读取并保存站点令牌，以后打开 App 无需再点刷新。API Key 和手动 Access Token 继续作为兼容兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
+            text = "推荐直接使用“网页登录并授权统计”。登录成功后会自动保存站点令牌；近实时服务和后台定时任务都会复用该令牌。API Key 和手动 Access Token 继续作为兼容兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             setPadding(dp(4), dp(10), dp(4), 0)
@@ -164,7 +184,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "M0.5 · 自动读取 / 登录后自动接管 / 后台定时更新"
+            text = "M0.6 · 近实时监控 / 自适应降频 / 一键充值"
             textSize = 12.5f
             setTextColor(Color.rgb(112, 120, 132))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -202,7 +222,29 @@ class MainActivity : Activity() {
         }
         saveFields(baseUrl)
         TrayScheduler.ensure(this)
+        syncRealtimeService()
         refreshNow(manual = true)
+    }
+
+    private fun toggleRealtime() {
+        val old = TrayStore.loadConfig(this)
+        val next = !old.realtimeEnabled
+        TrayStore.saveConfig(this, old.copy(realtimeEnabled = next))
+        if (next) {
+            RealtimeUsageService.start(this)
+        } else {
+            RealtimeUsageService.stop(this)
+        }
+        renderState(if (next) "近实时监控已开启" else "近实时监控已关闭；仍保留低频后台更新")
+    }
+
+    private fun syncRealtimeService() {
+        val config = TrayStore.loadConfig(this)
+        if (config.realtimeEnabled) {
+            RealtimeUsageService.start(this)
+        } else {
+            RealtimeUsageService.stop(this)
+        }
     }
 
     private fun maybeAutoRefresh() {
@@ -241,8 +283,14 @@ class MainActivity : Activity() {
 
     private fun renderState(message: String? = null) {
         val config = TrayStore.loadConfig(this)
+        realtimeButton.text = if (config.realtimeEnabled) {
+            "近实时监控：已开启"
+        } else {
+            "近实时监控：已关闭"
+        }
+
         loginStateText.text = when {
-            config.webAuthToken.isNotBlank() -> "网页登录：已授权（以后自动读取）"
+            config.webAuthToken.isNotBlank() -> "网页登录：已授权（可自动续期）"
             config.consoleCookie.isNotBlank() -> "网页登录：已保存 Cookie（兼容模式）"
             else -> "网页登录：未授权"
         }
@@ -298,6 +346,7 @@ class MainActivity : Activity() {
             grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) {
             TrayNotification.show(this)
+            syncRealtimeService()
         }
     }
 
