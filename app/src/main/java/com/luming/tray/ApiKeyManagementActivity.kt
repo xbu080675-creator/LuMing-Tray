@@ -52,11 +52,6 @@ class ApiKeyManagementActivity : FragmentActivity() {
         loadData()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (report != null && !loading) loadData()
-    }
-
     private fun buildUi(): View {
         val scroll = ScrollView(this).apply {
             setBackgroundColor(bgColor())
@@ -81,43 +76,8 @@ class ApiKeyManagementActivity : FragmentActivity() {
             }
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(TextView(this).apply {
-            text = "‹"
-            textSize = 34f
-            gravity = Gravity.CENTER
-            setTextColor(textPrimary())
-            setOnClickListener { finish() }
-        }, LinearLayout.LayoutParams(dp(44), dp(48)))
-        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleBox.addView(TextView(this).apply {
-            text = "API 管理"
-            textSize = 25f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(textPrimary())
-        })
-        titleBox.addView(TextView(this).apply {
-            text = "KEYS · GROUPS · LIMITS"
-            textSize = 10f
-            letterSpacing = 0.12f
-            setTextColor(textMuted())
-        })
-        header.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        statusPill = TextView(this).apply {
-            text = "读取中…"
-            textSize = 10f
-            gravity = Gravity.CENTER
-            setTextColor(accentDark())
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = pillBackground(Color.rgb(222, 243, 237))
-        }
-        header.addView(statusPill)
-        root.addView(header)
-
-        root.addView(endpointPanel(), matchWrap().apply { topMargin = dp(14) })
+        root.addView(buildHeader())
+        root.addView(buildEndpointPanel(), matchWrap().apply { topMargin = dp(14) })
 
         summaryText = TextView(this).apply {
             text = "正在读取 API Key…"
@@ -156,15 +116,54 @@ class ApiKeyManagementActivity : FragmentActivity() {
         return scroll
     }
 
-    private fun endpointPanel(): View {
-        val panel = softPanel().apply { setPadding(dp(16), dp(14), dp(16), dp(14)) }
-        val label = TextView(this).apply {
-            text = "API Endpoint"
-            textSize = 10f
-            letterSpacing = 0.08f
-            setTextColor(textMuted())
+    private fun buildHeader(): View {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        panel.addView(label)
+        header.addView(TextView(this).apply {
+            text = "‹"
+            textSize = 34f
+            gravity = Gravity.CENTER
+            setTextColor(textPrimary())
+            setOnClickListener { finish() }
+        }, LinearLayout.LayoutParams(dp(44), dp(48)))
+
+        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleBox.addView(TextView(this).apply {
+            text = "API 管理"
+            textSize = 25f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+        })
+        titleBox.addView(TextView(this).apply {
+            text = "KEYS · GROUPS · LIMITS"
+            textSize = 10f
+            letterSpacing = 0.12f
+            setTextColor(textMuted())
+        })
+        header.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        statusPill = TextView(this).apply {
+            text = "读取中…"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(accentDark())
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = pillBackground(Color.rgb(222, 243, 237))
+        }
+        header.addView(statusPill)
+        return header
+    }
+
+    private fun buildEndpointPanel(): View {
+        val panel = softPanel().apply { setPadding(dp(16), dp(14), dp(16), dp(14)) }
+        panel.addView(TextView(this).apply {
+            text = "API ENDPOINT"
+            textSize = 9.5f
+            letterSpacing = 0.09f
+            setTextColor(textMuted())
+        })
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -194,10 +193,10 @@ class ApiKeyManagementActivity : FragmentActivity() {
         Thread {
             val result = ApiKeyManagerClient.loadBlocking(applicationContext)
             runOnUiThread {
+                report = result
                 loading = false
                 refreshButton.isEnabled = true
-                createButton.isEnabled = result.groups.isNotEmpty() || TrayStore.loadConfig(this).webAuthToken.isNotBlank()
-                report = result
+                createButton.isEnabled = TrayStore.loadConfig(this).webAuthToken.isNotBlank()
                 endpointText.text = result.endpoint
                 statusPill.text = if (TrayStore.loadConfig(this).webAuthToken.isNotBlank()) "已授权" else "未授权"
                 render(result)
@@ -207,7 +206,6 @@ class ApiKeyManagementActivity : FragmentActivity() {
 
     private fun render(current: ApiKeyManagerReport) {
         content.removeAllViews()
-        val active = current.keys.count { it.status.equals("active", true) }
         val today = current.usage.values.sumOf { it.todayActualCost }
         val total = current.usage.values.sumOf { it.totalActualCost }
         summaryText.text = "${current.message} · 今日 ${money(today)} · 累计 ${money(total)}"
@@ -224,7 +222,9 @@ class ApiKeyManagementActivity : FragmentActivity() {
         }
 
         current.keys.forEachIndexed { index, key ->
-            content.addView(keyCard(key, current), matchWrap().apply { if (index > 0) topMargin = dp(12) })
+            content.addView(keyCard(key, current), matchWrap().apply {
+                if (index > 0) topMargin = dp(12)
+            })
         }
     }
 
@@ -248,8 +248,9 @@ class ApiKeyManagementActivity : FragmentActivity() {
             setPadding(0, dp(3), 0, 0)
         })
         header.addView(nameBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val active = key.status.equals("active", ignoreCase = true)
         header.addView(TextView(this).apply {
-            val active = key.status.equals("active", true)
             text = if (active) "启用" else "停用"
             textSize = 10.5f
             gravity = Gravity.CENTER
@@ -259,25 +260,24 @@ class ApiKeyManagementActivity : FragmentActivity() {
         })
         card.addView(header)
 
-        val groupLabel = buildString {
+        card.addView(infoText(buildString {
             append(key.groupName ?: "未绑定分组")
-            key.groupPlatform?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+            key.groupPlatform?.let { append(" · $it") }
             key.groupRateMultiplier?.let { append(" · ${rate(it)}") }
-        }
-        card.addView(infoText(groupLabel).apply { setPadding(0, dp(10), 0, 0) })
+        }).apply { setPadding(0, dp(10), 0, 0) })
 
         val usage = current.usage[key.id] ?: ApiKeyUsageSummary()
-        val usagePanel = LinearLayout(this).apply {
+        val metrics = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(11), 0, 0)
         }
-        usagePanel.addView(metric("今日", money(usage.todayActualCost)), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        usagePanel.addView(metric("累计", money(usage.totalActualCost)), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        usagePanel.addView(metric("并发", key.currentConcurrency.toString()), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        card.addView(usagePanel)
+        metrics.addView(metric("今日", money(usage.todayActualCost)), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        metrics.addView(metric("累计", money(usage.totalActualCost)), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        metrics.addView(metric("并发", key.currentConcurrency.toString()), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(metrics)
 
         val quotaText = if (key.quota > 0.0) {
-            "配额 ${money(key.quotaUsed)} / ${money(key.quota)} (${((key.quotaUsed / key.quota) * 100.0).coerceAtMost(999.0).let { String.format(Locale.US, "%.0f%%", it) }})"
+            "配额 ${money(key.quotaUsed)} / ${money(key.quota)}"
         } else {
             "配额：不限"
         }
@@ -287,14 +287,16 @@ class ApiKeyManagementActivity : FragmentActivity() {
         if (key.rateLimit5h > 0) limits += "5h ${money(key.usage5h)}/${money(key.rateLimit5h)}"
         if (key.rateLimit1d > 0) limits += "1d ${money(key.usage1d)}/${money(key.rateLimit1d)}"
         if (key.rateLimit7d > 0) limits += "7d ${money(key.usage7d)}/${money(key.rateLimit7d)}"
-        if (limits.isNotEmpty()) card.addView(infoText("限速 · ${limits.joinToString(" · ")}").apply { setPadding(0, dp(5), 0, 0) })
+        if (limits.isNotEmpty()) {
+            card.addView(infoText("窗口 · ${limits.joinToString(" · ")}").apply { setPadding(0, dp(5), 0, 0) })
+        }
 
-        val timeBits = mutableListOf<String>()
-        key.lastUsedAt?.let { timeBits += "最后使用 ${shortDateTime(it)}" }
-        key.expiresAt?.let { timeBits += "到期 ${shortDateTime(it)}" }
-        if (timeBits.isNotEmpty()) card.addView(infoText(timeBits.joinToString(" · ")).apply { setPadding(0, dp(5), 0, 0) })
+        val times = mutableListOf<String>()
+        key.lastUsedAt?.let { times += "最后使用 ${shortDateTime(it)}" }
+        key.expiresAt?.let { times += "到期 ${shortDateTime(it)}" }
+        if (times.isNotEmpty()) card.addView(infoText(times.joinToString(" · ")).apply { setPadding(0, dp(5), 0, 0) })
         if (key.ipWhitelist.isNotEmpty() || key.ipBlacklist.isNotEmpty()) {
-            card.addView(infoText("网络限制：白名单 ${key.ipWhitelist.size} · 黑名单 ${key.ipBlacklist.size}").apply { setPadding(0, dp(5), 0, 0) })
+            card.addView(infoText("IP 限制 · 白 ${key.ipWhitelist.size} / 黑 ${key.ipBlacklist.size}").apply { setPadding(0, dp(5), 0, 0) })
         }
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -303,7 +305,6 @@ class ApiKeyManagementActivity : FragmentActivity() {
         card.addView(row1, matchWrap().apply { topMargin = dp(13) })
 
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val active = key.status.equals("active", true)
         row2.addView(smallButton(if (active) "停用" else "启用") { toggleKey(key, !active) }, weighted(end = 5))
         row2.addView(smallButton("更多") { openMoreMenu(key) }, weighted(start = 5))
         card.addView(row2, matchWrap().apply { topMargin = dp(8) })
@@ -311,38 +312,39 @@ class ApiKeyManagementActivity : FragmentActivity() {
     }
 
     private fun copyKey(key: ManagedApiKey) {
-        SystemAuthGate.authenticate(this, "复制「${key.name}」的 API Key") {
-            runOperation("正在安全读取 Key…") { ApiKeyManagerClient.fetchSecretBlocking(applicationContext, key.id) } onDone@{ result ->
+        authenticate("复制「${key.name}」的 API Key") {
+            runOperation(
+                "正在安全读取 Key…",
+                { ApiKeyManagerClient.fetchSecretBlocking(applicationContext, key.id) }
+            ) { result ->
                 val secret = result.secret
                 if (!result.success || secret.isNullOrBlank()) {
                     toastStatus(result.message)
-                    return@onDone
+                } else {
+                    copySensitive(secret)
+                    toastStatus("API Key 已复制，45 秒后自动清理剪贴板")
                 }
-                copySensitive(secret)
-                toastStatus("API Key 已复制，45 秒后自动清理剪贴板")
             }
-        } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+        }
     }
 
     private fun toggleKey(key: ManagedApiKey, active: Boolean) {
-        SystemAuthGate.authenticate(this, if (active) "启用「${key.name}」" else "停用「${key.name}」") {
-            runOperation(if (active) "正在启用…" else "正在停用…") {
-                ApiKeyManagerClient.toggleBlocking(applicationContext, key.id, active)
-            } onDone@{ result ->
+        authenticate(if (active) "启用「${key.name}」" else "停用「${key.name}」") {
+            runOperation(
+                if (active) "正在启用…" else "正在停用…",
+                { ApiKeyManagerClient.toggleBlocking(applicationContext, key.id, active) }
+            ) { result ->
                 toastStatus(result.message)
                 if (result.success) loadData()
             }
-        } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+        }
     }
 
     private fun openMoreMenu(key: ManagedApiKey) {
         AlertDialog.Builder(this)
             .setTitle(key.name)
             .setItems(arrayOf("重置 Key 用量计数", "删除 API Key")) { _, which ->
-                when (which) {
-                    0 -> confirmReset(key)
-                    1 -> confirmDelete(key)
-                }
+                if (which == 0) confirmReset(key) else confirmDelete(key)
             }
             .setNegativeButton("取消", null)
             .show()
@@ -351,15 +353,18 @@ class ApiKeyManagementActivity : FragmentActivity() {
     private fun confirmReset(key: ManagedApiKey) {
         AlertDialog.Builder(this)
             .setTitle("重置用量？")
-            .setMessage("会重置这把 Key 的配额与限速窗口用量计数，不会删除 Key。")
+            .setMessage("会重置这把 Key 的配额和限速窗口用量计数，不会删除 Key。")
             .setNegativeButton("取消", null)
             .setPositiveButton("继续") { _, _ ->
-                SystemAuthGate.authenticate(this, "重置「${key.name}」的用量计数") {
-                    runOperation("正在重置…") { ApiKeyManagerClient.resetQuotaBlocking(applicationContext, key.id) } onDone@{ result ->
+                authenticate("重置「${key.name}」的用量计数") {
+                    runOperation(
+                        "正在重置…",
+                        { ApiKeyManagerClient.resetQuotaBlocking(applicationContext, key.id) }
+                    ) { result ->
                         toastStatus(result.message)
                         if (result.success) loadData()
                     }
-                } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+                }
             }
             .show()
     }
@@ -370,12 +375,15 @@ class ApiKeyManagementActivity : FragmentActivity() {
             .setMessage("「${key.name}」删除后无法恢复，使用它的客户端会立即失效。")
             .setNegativeButton("取消", null)
             .setPositiveButton("删除") { _, _ ->
-                SystemAuthGate.authenticate(this, "删除「${key.name}」") {
-                    runOperation("正在删除…") { ApiKeyManagerClient.deleteBlocking(applicationContext, key.id) } onDone@{ result ->
+                authenticate("删除「${key.name}」") {
+                    runOperation(
+                        "正在删除…",
+                        { ApiKeyManagerClient.deleteBlocking(applicationContext, key.id) }
+                    ) { result ->
                         toastStatus(result.message)
                         if (result.success) loadData()
                     }
-                } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+                }
             }
             .show()
     }
@@ -386,14 +394,12 @@ class ApiKeyManagementActivity : FragmentActivity() {
             toastStatus("请先完成网页登录授权")
             return
         }
-        SystemAuthGate.authenticate(this, "创建新的 API Key") {
-            showCreateForm(current.groups)
-        } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+        authenticate("创建新的 API Key") { showCreateForm(current.groups) }
     }
 
     private fun showCreateForm(groups: List<ApiKeyGroup>) {
         val form = formContainer()
-        val name = formField("名称，例如 SillyTavern")
+        val name = formField("例如 SillyTavern")
         val group = groupSpinner(groups, null)
         val quota = numberField("总配额 USD，0 = 不限")
         val expires = numberField("有效天数，留空 = 永久")
@@ -422,10 +428,9 @@ class ApiKeyManagementActivity : FragmentActivity() {
                     name.error = "请输入名称"
                     return@setOnClickListener
                 }
-                val selectedGroup = selectedGroup(group, groups)
                 val input = ApiKeyCreateInput(
                     name = keyName,
-                    groupId = selectedGroup?.id,
+                    groupId = selectedGroup(group, groups)?.id,
                     quota = nonNegative(quota),
                     expiresInDays = expires.text.toString().trim().toIntOrNull()?.takeIf { it > 0 },
                     rateLimit5h = nonNegative(limit5h),
@@ -435,16 +440,15 @@ class ApiKeyManagementActivity : FragmentActivity() {
                     ipBlacklist = parseIps(blacklist.text.toString())
                 )
                 dialog.dismiss()
-                runOperation("正在创建 API Key…") { ApiKeyManagerClient.createBlocking(applicationContext, input) } onDone@{ result ->
+                runOperation(
+                    "正在创建 API Key…",
+                    { ApiKeyManagerClient.createBlocking(applicationContext, input) }
+                ) { result ->
                     if (!result.success) {
                         toastStatus(result.message)
                     } else {
-                        val secret = result.secret
-                        if (secret.isNullOrBlank()) {
-                            toastStatus("API Key 已创建，但站点未返回 Key 原文")
-                        } else {
-                            showCreatedKeyDialog(secret)
-                        }
+                        result.secret?.takeIf { it.isNotBlank() }?.let(::showCreatedKeyDialog)
+                            ?: toastStatus("API Key 已创建，但站点没有返回 Key 原文")
                         loadData()
                     }
                 }
@@ -466,9 +470,7 @@ class ApiKeyManagementActivity : FragmentActivity() {
     }
 
     private fun editKey(key: ManagedApiKey, groups: List<ApiKeyGroup>) {
-        SystemAuthGate.authenticate(this, "修改「${key.name}」的 API 设置") {
-            showEditForm(key, groups)
-        } onFailure@{ message -> toastStatus("身份验证未完成：$message") }
+        authenticate("修改「${key.name}」的 API 设置") { showEditForm(key, groups) }
     }
 
     private fun showEditForm(key: ManagedApiKey, groups: List<ApiKeyGroup>) {
@@ -476,9 +478,7 @@ class ApiKeyManagementActivity : FragmentActivity() {
         val name = formField("名称").apply { setText(key.name) }
         val group = groupSpinner(groups, key.groupId)
         val quota = numberField("总配额 USD，0 = 不限").apply { setText(trimNumber(key.quota)) }
-        val expires = formField("到期日 YYYY-MM-DD；留空 = 永久").apply {
-            setText(key.expiresAt?.take(10).orEmpty())
-        }
+        val expires = formField("到期日 YYYY-MM-DD；留空 = 永久").apply { setText(key.expiresAt?.take(10).orEmpty()) }
         val limit5h = numberField("5 小时额度 USD，0 = 不限").apply { setText(trimNumber(key.rateLimit5h)) }
         val limit1d = numberField("1 天额度 USD，0 = 不限").apply { setText(trimNumber(key.rateLimit1d)) }
         val limit7d = numberField("7 天额度 USD，0 = 不限").apply { setText(trimNumber(key.rateLimit7d)) }
@@ -504,19 +504,17 @@ class ApiKeyManagementActivity : FragmentActivity() {
                     name.error = "请输入名称"
                     return@setOnClickListener
                 }
-                val expiryText = expires.text.toString().trim()
-                val expiresAt = when {
-                    expiryText.isBlank() -> ""
-                    else -> toRfc3339(expiryText) ?: run {
-                        expires.error = "格式应为 YYYY-MM-DD"
-                        return@setOnClickListener
-                    }
+                val rawExpiry = expires.text.toString().trim()
+                val expiry = if (rawExpiry.isBlank()) "" else toRfc3339(rawExpiry)
+                if (rawExpiry.isNotBlank() && expiry == null) {
+                    expires.error = "格式应为 YYYY-MM-DD"
+                    return@setOnClickListener
                 }
                 val input = ApiKeyUpdateInput(
                     name = keyName,
                     groupId = selectedGroup(group, groups)?.id,
                     quota = nonNegative(quota),
-                    expiresAt = expiresAt,
+                    expiresAt = expiry,
                     rateLimit5h = nonNegative(limit5h),
                     rateLimit1d = nonNegative(limit1d),
                     rateLimit7d = nonNegative(limit7d),
@@ -524,7 +522,10 @@ class ApiKeyManagementActivity : FragmentActivity() {
                     ipBlacklist = parseIps(blacklist.text.toString())
                 )
                 dialog.dismiss()
-                runOperation("正在保存设置…") { ApiKeyManagerClient.updateBlocking(applicationContext, key.id, input) } onDone@{ result ->
+                runOperation(
+                    "正在保存设置…",
+                    { ApiKeyManagerClient.updateBlocking(applicationContext, key.id, input) }
+                ) { result ->
                     toastStatus(result.message)
                     if (result.success) loadData()
                 }
@@ -533,28 +534,13 @@ class ApiKeyManagementActivity : FragmentActivity() {
         dialog.show()
     }
 
-    private fun groupSpinner(groups: List<ApiKeyGroup>, selectedId: Long?): Spinner {
-        val spinner = Spinner(this)
-        val labels = mutableListOf("不指定分组（自动路由）")
-        labels += groups.map { group ->
-            buildString {
-                append(group.name)
-                append(" · ${group.platform}")
-                append(" · ${rate(group.effectiveRateMultiplier)}")
-                if (group.exclusive) append(" · 专属")
-            }
-        }
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        val index = groups.indexOfFirst { it.id == selectedId }
-        spinner.setSelection(if (index >= 0) index + 1 else 0)
-        spinner.background = inputBackground()
-        spinner.setPadding(dp(12), 0, dp(12), 0)
-        return spinner
-    }
-
-    private fun selectedGroup(spinner: Spinner, groups: List<ApiKeyGroup>): ApiKeyGroup? {
-        val index = spinner.selectedItemPosition - 1
-        return groups.getOrNull(index)
+    private fun authenticate(reason: String, onSuccess: () -> Unit) {
+        SystemAuthGate.authenticate(
+            activity = this,
+            reason = reason,
+            onSuccess = onSuccess,
+            onFailure = { message -> toastStatus("身份验证未完成：$message") }
+        )
     }
 
     private fun runOperation(
@@ -572,6 +558,27 @@ class ApiKeyManagementActivity : FragmentActivity() {
         }.start()
     }
 
+    private fun groupSpinner(groups: List<ApiKeyGroup>, selectedId: Long?): Spinner {
+        val spinner = Spinner(this)
+        val labels = mutableListOf("不指定分组（自动路由）")
+        labels += groups.map { group ->
+            buildString {
+                append(group.name)
+                append(" · ${group.platform} · ${rate(group.effectiveRateMultiplier)}")
+                if (group.exclusive) append(" · 专属")
+            }
+        }
+        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
+        val index = groups.indexOfFirst { it.id == selectedId }
+        spinner.setSelection(if (index >= 0) index + 1 else 0)
+        spinner.background = inputBackground()
+        spinner.setPadding(dp(12), 0, dp(12), 0)
+        return spinner
+    }
+
+    private fun selectedGroup(spinner: Spinner, groups: List<ApiKeyGroup>): ApiKeyGroup? =
+        groups.getOrNull(spinner.selectedItemPosition - 1)
+
     private fun copySensitive(value: String) {
         val clipboard = getSystemService(ClipboardManager::class.java)
         val clip = ClipData.newPlainText("LuMing API Key", value)
@@ -582,7 +589,9 @@ class ApiKeyManagementActivity : FragmentActivity() {
         }
         clipboard.setPrimaryClip(clip)
         Handler(Looper.getMainLooper()).postDelayed({
-            val current = runCatching { clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() }.getOrNull()
+            val current = runCatching {
+                clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+            }.getOrNull()
             if (current == value) {
                 if (Build.VERSION.SDK_INT >= 28) clipboard.clearPrimaryClip()
                 else clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
@@ -591,7 +600,8 @@ class ApiKeyManagementActivity : FragmentActivity() {
     }
 
     private fun copyPlain(value: String, label: String) {
-        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, value))
+        getSystemService(ClipboardManager::class.java)
+            .setPrimaryClip(ClipData.newPlainText(label, value))
     }
 
     private fun formContainer() = LinearLayout(this).apply {
@@ -599,7 +609,7 @@ class ApiKeyManagementActivity : FragmentActivity() {
         setPadding(dp(4), dp(4), dp(4), dp(12))
     }
 
-    private fun wrapForm(form: View): View = ScrollView(this).apply {
+    private fun wrapForm(form: View) = ScrollView(this).apply {
         setPadding(dp(16), 0, dp(16), 0)
         addView(form)
     }
@@ -659,9 +669,17 @@ class ApiKeyManagementActivity : FragmentActivity() {
 
     private fun metric(label: String, value: String): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        addView(TextView(this@ApiKeyManagementActivity).apply { text = label; textSize = 9.5f; setTextColor(textMuted()) })
         addView(TextView(this@ApiKeyManagementActivity).apply {
-            text = value; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(4), 0, 0)
+            text = label
+            textSize = 9.5f
+            setTextColor(textMuted())
+        })
+        addView(TextView(this@ApiKeyManagementActivity).apply {
+            text = value
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+            setPadding(0, dp(4), 0, 0)
         })
     }
 
