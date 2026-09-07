@@ -19,6 +19,10 @@ object BalanceAlert {
     private const val STATE_CRITICAL = 2
 
     fun evaluate(context: Context, stats: UsageStats) {
+        // Every successful stats write also feeds local cost history. The recorder throttles
+        // high-frequency refreshes into five-minute samples, so realtime monitoring stays compact.
+        UsageHistory.recordSnapshot(context, stats)
+
         val config = TrayStore.loadConfig(context)
         if (!config.balanceAlertEnabled) {
             clear(context)
@@ -35,14 +39,11 @@ object BalanceAlert {
         val previousState = TrayStore.loadBalanceAlertState(context)
 
         if (nextState == STATE_NORMAL) {
-            if (previousState != STATE_NORMAL) {
-                clear(context)
-            }
+            if (previousState != STATE_NORMAL) clear(context)
             return
         }
 
         if (!canNotify(context)) return
-
         val shouldNotify = when (nextState) {
             STATE_CRITICAL -> previousState != STATE_CRITICAL
             STATE_WARNING -> previousState == STATE_NORMAL
@@ -51,8 +52,7 @@ object BalanceAlert {
         if (!shouldNotify) return
 
         ensureChannel(context)
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.notify(
+        context.getSystemService(NotificationManager::class.java).notify(
             NOTIFICATION_ID,
             buildNotification(context, balance, threshold, nextState)
         )
@@ -64,12 +64,7 @@ object BalanceAlert {
         TrayStore.saveBalanceAlertState(context, STATE_NORMAL)
     }
 
-    private fun buildNotification(
-        context: Context,
-        balance: Double,
-        threshold: Double,
-        state: Int
-    ): Notification {
+    private fun buildNotification(context: Context, balance: Double, threshold: Double, state: Int): Notification {
         val open = PendingIntent.getActivity(
             context,
             11,
@@ -80,6 +75,12 @@ object BalanceAlert {
             context,
             12,
             Intent(context, RechargeActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val analysis = PendingIntent.getActivity(
+            context,
+            13,
+            Intent(context, AnalysisActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -97,20 +98,9 @@ object BalanceAlert {
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open)
-            .addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(context, android.R.drawable.ic_menu_view),
-                    "查看用量",
-                    open
-                ).build()
-            )
-            .addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(context, android.R.drawable.ic_input_add),
-                    "立即充值",
-                    recharge
-                ).build()
-            )
+            .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_menu_view), "查看用量", open).build())
+            .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_menu_manage), "消费分析", analysis).build())
+            .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_input_add), "立即充值", recharge).build())
             .setAutoCancel(true)
             .setOnlyAlertOnce(false)
             .build()
@@ -118,13 +108,8 @@ object BalanceAlert {
 
     private fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
-            val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "LuMing 余额预警",
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply {
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "LuMing 余额预警", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "余额跌破设定阈值或余额不足时提醒"
                 }
             )
@@ -132,6 +117,5 @@ object BalanceAlert {
     }
 
     private fun canNotify(context: Context): Boolean =
-        Build.VERSION.SDK_INT < 33 ||
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 }
