@@ -17,7 +17,6 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -67,10 +66,10 @@ class SafeMainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lastDark = isDark()
-        applySystemBars()
 
         try {
+            lastDark = isDark()
+            applySystemBarsCompat()
             setContentView(buildUi())
             renderCachedState()
             statusText.text = "系统已就绪 · 正在接管后台监控"
@@ -226,7 +225,7 @@ class SafeMainActivity : Activity() {
         root.addView(footer, matchWrap().apply { topMargin = dp(16) })
 
         root.addView(TextView(this).apply {
-            text = "LuMing Tray 0.17.6"
+            text = "LuMing Tray 0.17.6.2"
             textSize = 10f
             typeface = regular
             gravity = Gravity.CENTER
@@ -542,22 +541,17 @@ class SafeMainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(34), dp(22), dp(28))
-            setBackgroundColor(bg())
+            setBackgroundColor(runCatching { bg() }.getOrDefault(Color.rgb(232, 239, 242)))
             addView(TextView(this@SafeMainActivity).apply {
                 text = "LuMing 安全启动模式"
                 textSize = 24f
-                typeface = medium
-                setTextColor(primary())
+                setTextColor(Color.rgb(37, 47, 58))
             })
             addView(TextView(this@SafeMainActivity).apply {
                 text = "首页渲染出现异常，但进程没有退出。\n${t.javaClass.simpleName}\n${t.message.orEmpty().take(240)}"
                 textSize = 12f
-                typeface = regular
-                setTextColor(secondary())
+                setTextColor(Color.rgb(75, 88, 101))
                 setPadding(0, dp(16), 0, 0)
-            })
-            addView(actionButton("打开应用设置") { open("SettingsActivity") }, matchHeight(50).apply {
-                topMargin = dp(18)
             })
         }
         setContentView(root)
@@ -706,11 +700,6 @@ class SafeMainActivity : Activity() {
         LinearLayout.LayoutParams.WRAP_CONTENT
     )
 
-    private fun matchHeight(height: Int) = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        dp(height)
-    )
-
     private fun plainPrefs() = getSharedPreferences("luming_tray", MODE_PRIVATE)
 
     private fun isDark(): Boolean {
@@ -722,18 +711,18 @@ class SafeMainActivity : Activity() {
         }
     }
 
-    private fun applySystemBars() {
-        val dark = isDark()
-        window.statusBarColor = bg()
-        window.navigationBarColor = bg()
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.setSystemBarsAppearance(
-                if (dark) 0 else WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-        } else {
+    private fun applySystemBarsCompat() {
+        runCatching {
+            window.statusBarColor = bg()
+            window.navigationBarColor = bg()
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            run {
+                window.decorView.systemUiVisibility = if (isDark()) {
+                    0
+                } else {
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                }
+            }
         }
     }
 
