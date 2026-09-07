@@ -3,8 +3,10 @@ package com.luming.tray
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -66,15 +68,19 @@ data class ModelAvailabilityReport(
     val refreshedAt: Long = System.currentTimeMillis()
 )
 
+private data class RefreshedMonitorAuth(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresAt: Long
+)
+
 /**
- * Reads the same two authenticated Sub2API user endpoints shown by the web dashboard:
- * 1) /api/v1/channels/available       — channel/group/model catalog
- * 2) /api/v1/channel-monitors         — current health + recent timeline
- *    /api/v1/channel-monitors/:id/status — 7/15/30 day availability detail
- *
- * No HTML scraping is used. The existing encrypted Web login token is reused in memory.
+ * Reads the same authenticated Sub2API endpoints used by the web dashboard.
+ * Full UI refresh uses channel catalog + monitor detail; background refresh intentionally calls
+ * only /channel-monitors once per cycle so 60-second monitoring stays lightweight.
  */
 object ModelAvailabilityClient {
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val client = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(18, TimeUnit.SECONDS)
@@ -88,43 +94,129 @@ object ModelAvailabilityClient {
         }.start()
     }
 
-    private fun loadBlocking(context: Context): ModelAvailabilityReport {
-        // Let the existing auth path refresh an expiring Sub2API token first.
-        UsageClient.refreshBlocking(context)
+    fun loadBlocking(context: Context): ModelAvailabilityReport {
+        ModelAvailabilityMonitor.markAttempt(context)
         val config = TrayStore.loadConfig(context)
-        val token = config.webAuthToken.trim()
-        if (token.isBlank()) {
-            return ModelAvailabilityReport(
-                channels = emptyList(),
-                monitors = emptyList(),
-                message = "尚未完成网页登录授权"
-            )
+        val root = siteRoot(config.baseUrl)
+        var token = resolveWebToken(context, forceRefresh = false)
+        if (token.isNullOrBlank()) return notLoggedIn()
+
+        var channelsValue = requestValue("$root/api/v1/channels/available", token)
+        var monitorsValue = requestValue("$root/api/v1/channel-monitors", token)
+        if (channelsValue == null && monitorsValue == null) {
+            val refreshed = resolveWebToken(context, forceRefresh = true)
+            if (!refreshed.isNullOrBlank()) {
+                token = refreshed
+                channelsValue = requestValue("$root/api/v1/channels/available", token)
+                monitorsValue = requestValue("$root/api/v1/channel-monitors", token)
+            }
         }
 
-        val root = siteRoot(config.baseUrl)
-        val channels = requestValue("$root/api/v1/channels/available", token)
-            ?.let(::parseChannels)
-            .orEmpty()
-
-        val monitorList = requestValue("$root/api/v1/channel-monitors", token)
-            ?.let(::parseMonitorList)
-            .orEmpty()
-
+        val channels = channelsValue?.let(::parseChannels).orEmpty()
+        val monitorList = monitorsValue?.let(::parseMonitorList).orEmpty()
         val monitors = monitorList.map { base ->
             val detail = requestObject("$root/api/v1/channel-monitors/${base.id}/status", token)
             mergeDetail(base, detail)
         }
 
+        if (monitors.isNotEmpty()) ModelAvailabilityMonitor.process(context, monitors)
+        return ModelAvailabilityReport(
+            channels = channels,
+            monitors = monitors,
+            message = reportMessage(channels, monitors)
+        )
+    }
+
+    /** One-request path used by the foreground service every ~60 seconds. */
+    fun loadSummaryBlocking(context: Context): ModelAvailabilityReport {
+        ModelAvailabilityMonitor.markAttempt(context)
+        val config = TrayStore.loadConfig(context)
+        val root = siteRoot(config.baseUrl)
+        var token = resolveWebToken(context, forceRefresh = false)
+        if (token.isNullOrBlank()) return notLoggedIn()
+
+        var value = requestValue("$root/api/v1/channel-monitors", token)
+        if (value == null) {
+            val refreshed = resolveWebToken(context, forceRefresh = true)
+            if (!refreshed.isNullOrBlank()) {
+                token = refreshed
+                value = requestValue("$root/api/v1/channel-monitors", token)
+            }
+        }
+
+        val monitors = value?.let(::parseMonitorList).orEmpty()
+        if (monitors.isNotEmpty()) ModelAvailabilityMonitor.process(context, monitors)
+        return ModelAvailabilityReport(
+            channels = emptyList(),
+            monitors = monitors,
+            message = if (monitors.isEmpty()) "模型可用性后台刷新未取得数据" else "${monitors.size} 路可用性监控"
+        )
+    }
+
+    private fun notLoggedIn() = ModelAvailabilityReport(
+        channels = emptyList(),
+        monitors = emptyList(),
+        message = "尚未完成网页登录授权"
+    )
+
+    private fun reportMessage(channels: List<AvailableChannel>, monitors: List<ModelMonitor>): String {
         val parts = mutableListOf<String>()
         if (channels.isNotEmpty()) parts += "${channels.size} 个渠道"
         if (monitors.isNotEmpty()) parts += "${monitors.size} 路可用性监控"
-        val message = if (parts.isEmpty()) {
-            "站点没有返回可用渠道或可用性监控数据"
-        } else {
-            parts.joinToString(" · ")
-        }
+        return if (parts.isEmpty()) "站点没有返回可用渠道或可用性监控数据" else parts.joinToString(" · ")
+    }
 
-        return ModelAvailabilityReport(channels, monitors, message)
+    private fun resolveWebToken(context: Context, forceRefresh: Boolean): String? {
+        var config = TrayStore.loadConfig(context)
+        val current = config.webAuthToken.trim()
+        if (current.isBlank()) return null
+        val expiringSoon = config.webTokenExpiresAt > 0L &&
+            config.webTokenExpiresAt <= System.currentTimeMillis() + 60_000L
+        if (!forceRefresh && !expiringSoon) return current
+        val refreshToken = config.webRefreshToken.trim()
+        if (refreshToken.isBlank()) return current
+
+        val refreshed = refreshWebToken(siteRoot(config.baseUrl), refreshToken) ?: return current
+        config = config.copy(
+            webAuthToken = refreshed.accessToken,
+            webRefreshToken = refreshed.refreshToken,
+            webTokenExpiresAt = refreshed.expiresAt
+        )
+        TrayStore.saveConfig(context, config)
+        return refreshed.accessToken
+    }
+
+    private fun refreshWebToken(root: String, refreshToken: String): RefreshedMonitorAuth? {
+        val payload = JSONObject().put("refresh_token", refreshToken).toString()
+        val request = Request.Builder()
+            .url("$root/api/v1/auth/refresh")
+            .post(payload.toRequestBody(jsonMediaType))
+            .header("Accept", "application/json")
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string()?.trim().orEmpty()
+                if (body.isEmpty()) return null
+                val rootObj = JSONTokener(body).nextValue() as? JSONObject ?: return null
+                val data = when {
+                    rootObj.has("code") && rootObj.optInt("code", -1) == 0 -> rootObj.optJSONObject("data")
+                    rootObj.optJSONObject("data") != null -> rootObj.optJSONObject("data")
+                    else -> rootObj
+                } ?: return null
+                val access = data.optString("access_token").trim()
+                if (access.isBlank()) return null
+                val rotated = data.optString("refresh_token").trim().ifBlank { refreshToken }
+                val expiresIn = data.optLong("expires_in", 3600L).coerceAtLeast(60L)
+                RefreshedMonitorAuth(
+                    accessToken = access,
+                    refreshToken = rotated,
+                    expiresAt = System.currentTimeMillis() + expiresIn * 1000L
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun parseChannels(value: Any): List<AvailableChannel> {
