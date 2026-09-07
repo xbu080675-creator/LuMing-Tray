@@ -8,7 +8,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
-import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -93,12 +92,8 @@ data class ApiKeyOperationResult(
 /**
  * Native client for the user-side Sub2API API-key settings page.
  *
- * Security boundary:
- * - list responses may contain the full key, but LuMing deliberately never stores or exposes it
- *   in ManagedApiKey; the field is ignored while parsing.
- * - the full key is fetched only after a user-authenticated copy action, or exists briefly after
- *   creation so the user can copy it once.
- * - nothing here writes API-key secrets into SharedPreferences/SecureVault or logs them.
+ * List responses can contain a full key, but LuMing deliberately ignores that field. The key
+ * exists in memory only after an authenticated copy request or immediately after creation.
  */
 object ApiKeyManagerClient {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
@@ -117,7 +112,6 @@ object ApiKeyManagerClient {
             message = "尚未完成网页登录授权"
         )
         val (root, token, endpoint) = session
-
         val groups = fetchGroups(root, token)
         val groupMap = groups.associateBy { it.id }
         val keys = fetchAllKeys(root, token).map { key ->
@@ -129,12 +123,8 @@ object ApiKeyManagerClient {
             )
         }
         val usage = fetchBatchUsage(root, token, keys.map { it.id })
-
         val active = keys.count { it.status.equals("active", ignoreCase = true) }
-        val message = when {
-            keys.isEmpty() -> "当前账号还没有 API Key"
-            else -> "${keys.size} 把 Key · $active 把启用"
-        }
+        val message = if (keys.isEmpty()) "当前账号还没有 API Key" else "${keys.size} 把 Key · $active 把启用"
         return ApiKeyManagerReport(keys, groups, usage, endpoint, message)
     }
 
@@ -159,8 +149,7 @@ object ApiKeyManagerClient {
             idempotencyKey = UUID.randomUUID().toString()
         )
         if (!response.success) return ApiKeyOperationResult(false, response.message)
-        val obj = response.value as? JSONObject
-        val secret = obj?.optString("key")?.takeIf { it.isNotBlank() }
+        val secret = (response.value as? JSONObject)?.optString("key")?.takeIf { it.isNotBlank() }
         return ApiKeyOperationResult(true, "API Key 已创建", secret)
     }
 
@@ -185,8 +174,12 @@ object ApiKeyManagerClient {
     fun toggleBlocking(context: Context, id: Long, active: Boolean): ApiKeyOperationResult {
         val session = session(context) ?: return ApiKeyOperationResult(false, "网页登录授权已失效")
         val (root, token) = session
-        val payload = JSONObject().put("status", if (active) "active" else "inactive")
-        val response = request("$root/api/v1/keys/$id", token, "PUT", payload)
+        val response = request(
+            "$root/api/v1/keys/$id",
+            token,
+            "PUT",
+            JSONObject().put("status", if (active) "active" else "inactive")
+        )
         return ApiKeyOperationResult(
             response.success,
             if (response.success) (if (active) "API Key 已启用" else "API Key 已停用") else response.message
@@ -222,14 +215,13 @@ object ApiKeyManagerClient {
         return ApiKeyOperationResult(true, "API Key 已读取", secret)
     }
 
-    private data class Session(val root: String, val token: String, val endpoint: String) {
+    private class Session(val root: String, val token: String, val endpoint: String) {
         operator fun component1() = root
         operator fun component2() = token
         operator fun component3() = endpoint
     }
 
     private fun session(context: Context): Session? {
-        // Reuse the existing token refresh path. It keeps refresh tokens encrypted in SecureVault.
         UsageClient.refreshBlocking(context)
         val config = TrayStore.loadConfig(context)
         val token = config.webAuthToken.trim()
@@ -239,10 +231,9 @@ object ApiKeyManagerClient {
     }
 
     private fun fetchGroups(root: String, token: String): List<ApiKeyGroup> {
-        val groupsValue = request("$root/api/v1/groups/available", token, "GET", null)
-        val array = groupsValue.value as? JSONArray ?: return emptyList()
-        val ratesValue = request("$root/api/v1/groups/rates", token, "GET", null).value
-        val ratesObj = ratesValue as? JSONObject
+        val groupResult = request("$root/api/v1/groups/available", token, "GET", null)
+        val array = groupResult.value as? JSONArray ?: return emptyList()
+        val ratesObj = request("$root/api/v1/groups/rates", token, "GET", null).value as? JSONObject
         val result = mutableListOf<ApiKeyGroup>()
         for (i in 0 until array.length()) {
             val item = array.optJSONObject(i) ?: continue
@@ -365,12 +356,10 @@ object ApiKeyManagerClient {
                     else -> "HTTP ${response.code}"
                 }
                 if (!response.isSuccessful) return@use HttpResult(false, null, message)
-
                 if (parsed is JSONObject && parsed.has("code") && parsed.optInt("code", 0) != 0) {
                     return@use HttpResult(false, null, message)
                 }
-                val value = unwrapData(parsed)
-                HttpResult(true, value, message.ifBlank { "OK" })
+                HttpResult(true, unwrapData(parsed), message.ifBlank { "OK" })
             }
         } catch (e: Exception) {
             HttpResult(false, null, e.message ?: "网络请求失败")
