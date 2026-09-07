@@ -63,7 +63,7 @@ object UsageClient {
 
     fun refresh(context: Context, callback: (RefreshResult) -> Unit) {
         Thread {
-            val result = refreshBlocking(context)
+            val result = refreshBlocking(context.applicationContext)
             Handler(Looper.getMainLooper()).post { callback(result) }
         }.start()
     }
@@ -74,7 +74,8 @@ object UsageClient {
             config.apiKey.isBlank() &&
             config.accessToken.isBlank() &&
             config.consoleCookie.isBlank() &&
-            config.webAuthToken.isBlank()
+            config.webAuthToken.isBlank() &&
+            config.webRefreshToken.isBlank()
         ) {
             return RefreshResult(false, TrayStore.loadStats(context), "请先网页登录，或填写 API Key / Access Token")
         }
@@ -95,35 +96,53 @@ object UsageClient {
         var tpm: Double? = null
         var sub2Matched = false
 
-        // LuMing 当前网页与 Sub2API 前端高度一致：网页登录凭据实际放在
-        // localStorage 的 auth_token / refresh_token，而不是只靠 Cookie。
+        // A refresh token is sufficient to rebuild a missing/expired access token. Previously the
+        // client only entered this branch when webAuthToken was already nonblank, so a refresh-only
+        // session could never recover by itself.
         var webToken = config.webAuthToken.trim()
+        var refreshToken = config.webRefreshToken.trim()
+        if (webToken.isBlank() && refreshToken.isNotBlank()) {
+            refreshSub2Token(root, refreshToken)?.let { refreshed ->
+                config = config.copy(
+                    webAuthToken = refreshed.accessToken,
+                    webRefreshToken = refreshed.refreshToken,
+                    webTokenExpiresAt = refreshed.expiresAt
+                )
+                if (!TrayStore.saveConfig(context, config)) notes += "令牌恢复未持久化"
+                webToken = refreshed.accessToken
+                refreshToken = refreshed.refreshToken
+                notes += "网页登录令牌已恢复"
+            }
+        }
+
         if (webToken.isNotBlank()) {
             val expiringSoon = config.webTokenExpiresAt > 0L &&
                 config.webTokenExpiresAt <= System.currentTimeMillis() + 60_000L
-            if (expiringSoon && config.webRefreshToken.isNotBlank()) {
-                refreshSub2Token(root, config.webRefreshToken)?.let { refreshed ->
+            if (expiringSoon && refreshToken.isNotBlank()) {
+                refreshSub2Token(root, refreshToken)?.let { refreshed ->
                     config = config.copy(
                         webAuthToken = refreshed.accessToken,
                         webRefreshToken = refreshed.refreshToken,
                         webTokenExpiresAt = refreshed.expiresAt
                     )
-                    TrayStore.saveConfig(context, config)
+                    if (!TrayStore.saveConfig(context, config)) notes += "令牌续期未持久化"
                     webToken = refreshed.accessToken
+                    refreshToken = refreshed.refreshToken
                     notes += "网页登录令牌已续期"
                 }
             }
 
             var sub2 = fetchSub2Snapshot(root, webToken)
-            if (sub2 == null && config.webRefreshToken.isNotBlank()) {
-                refreshSub2Token(root, config.webRefreshToken)?.let { refreshed ->
+            if (sub2 == null && refreshToken.isNotBlank()) {
+                refreshSub2Token(root, refreshToken)?.let { refreshed ->
                     config = config.copy(
                         webAuthToken = refreshed.accessToken,
                         webRefreshToken = refreshed.refreshToken,
                         webTokenExpiresAt = refreshed.expiresAt
                     )
-                    TrayStore.saveConfig(context, config)
+                    if (!TrayStore.saveConfig(context, config)) notes += "令牌恢复未持久化"
                     webToken = refreshed.accessToken
+                    refreshToken = refreshed.refreshToken
                     sub2 = fetchSub2Snapshot(root, webToken)
                     if (sub2 != null) notes += "网页登录令牌已恢复"
                 }
@@ -315,7 +334,7 @@ object UsageClient {
         val data = unwrapApiData(response) ?: return null
         val access = data.string("access_token") ?: return null
         val rotatedRefresh = data.string("refresh_token") ?: refreshToken
-        val expiresIn = data.longNumber("expires_in") ?: 3600L
+        val expiresIn = (data.longNumber("expires_in") ?: 3600L).coerceAtLeast(60L)
         return RefreshedWebAuth(
             accessToken = access,
             refreshToken = rotatedRefresh,
@@ -436,13 +455,9 @@ object UsageClient {
                 .url(url)
                 .get()
                 .header("Accept", "application/json")
-                .header("User-Agent", "LuMing-Tray/0.4")
-            if (!authorization.isNullOrBlank()) {
-                builder.header("Authorization", authorization)
-            }
-            if (!cookie.isNullOrBlank()) {
-                builder.header("Cookie", cookie)
-            }
+                .header("User-Agent", "LuMing-Tray/0.17.4")
+            if (!authorization.isNullOrBlank()) builder.header("Authorization", authorization)
+            if (!cookie.isNullOrBlank()) builder.header("Cookie", cookie)
             client.newCall(builder.build()).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (body.isBlank()) return null
@@ -459,7 +474,7 @@ object UsageClient {
                 .url(url)
                 .post(payload.toString().toRequestBody(jsonMediaType))
                 .header("Accept", "application/json")
-                .header("User-Agent", "LuMing-Tray/0.4")
+                .header("User-Agent", "LuMing-Tray/0.17.4")
                 .build()
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
@@ -473,13 +488,14 @@ object UsageClient {
 
     private fun siteRoot(baseUrl: String): String {
         val clean = baseUrl.trim().trimEnd('/')
-        return if (clean.endsWith("/v1")) clean.dropLast(3).trimEnd('/') else clean
+        return when {
+            clean.endsWith("/api/v1") -> clean.removeSuffix("/api/v1")
+            clean.endsWith("/v1") -> clean.removeSuffix("/v1")
+            else -> clean
+        }
     }
 
-    private fun apiBase(baseUrl: String): String {
-        val root = siteRoot(baseUrl)
-        return "$root/v1"
-    }
+    private fun apiBase(baseUrl: String): String = "${siteRoot(baseUrl)}/v1"
 
     private fun todayString(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -496,8 +512,7 @@ object UsageClient {
         return null
     }
 
-    private fun JSONObject.longNumber(vararg keys: String): Long? =
-        number(*keys)?.toLong()
+    private fun JSONObject.longNumber(vararg keys: String): Long? = number(*keys)?.toLong()
 
     private fun JSONObject.string(vararg keys: String): String? {
         for (key in keys) {
@@ -522,12 +537,13 @@ class UsageWorker(
             config.apiKey.isBlank() &&
             config.accessToken.isBlank() &&
             config.consoleCookie.isBlank() &&
-            config.webAuthToken.isBlank()
+            config.webAuthToken.isBlank() &&
+            config.webRefreshToken.isBlank()
         ) {
             return Result.success()
         }
-        UsageClient.refreshBlocking(applicationContext)
-        return Result.success()
+        val result = UsageClient.refreshBlocking(applicationContext)
+        return if (result.success) Result.success() else Result.retry()
     }
 }
 
