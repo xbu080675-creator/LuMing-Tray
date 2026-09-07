@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.roundToInt
@@ -26,11 +27,18 @@ class FloatingTrayService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var balanceText: TextView? = null
     private var detailText: TextView? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private var gestureActive = false
     private var lastRenderedSignature: String? = null
     private var lastWindowUpdateAt = 0L
     private var pendingWindowUpdate: Runnable? = null
+
+    // Resize is previewed in a separate non-touchable full-screen overlay. This avoids doing
+    // expensive WindowManager relayout transactions for every finger movement.
+    private var resizePreviewRoot: FrameLayout? = null
+    private var resizePreviewBox: FrameLayout? = null
+    private var resizePreviewLabel: TextView? = null
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -51,9 +59,7 @@ class FloatingTrayService : Service() {
             return START_NOT_STICKY
         }
 
-        if (rootView == null) {
-            showOverlay(config)
-        }
+        if (rootView == null) showOverlay(config)
         renderStats(force = true)
         return START_STICKY
     }
@@ -61,6 +67,7 @@ class FloatingTrayService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(refreshRunnable)
         cancelPendingWindowUpdate()
+        hideResizePreview()
         rootView?.let {
             try {
                 windowManager.removeView(it)
@@ -90,6 +97,7 @@ class FloatingTrayService : Service() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(38)
         }
 
         val title = TextView(this).apply {
@@ -109,7 +117,8 @@ class FloatingTrayService : Service() {
             textSize = 18f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(100, 108, 118))
-            setPadding(dp(7), 0, dp(2), 0)
+            minWidth = dp(40)
+            minHeight = dp(38)
             setOnClickListener {
                 val old = TrayStore.loadConfig(this@FloatingTrayService)
                 TrayStore.saveConfig(this@FloatingTrayService, old.copy(floatingEnabled = false))
@@ -139,7 +148,7 @@ class FloatingTrayService : Service() {
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(44)
+            minimumHeight = dp(52)
         }
         footer.addView(TextView(this).apply {
             text = "拖标题移动 · 拖底栏缩放"
@@ -149,17 +158,13 @@ class FloatingTrayService : Service() {
 
         val resize = TextView(this).apply {
             text = "↘"
-            textSize = 22f
+            textSize = 24f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(72, 82, 94))
-            minWidth = dp(52)
-            minHeight = dp(44)
-            setPadding(dp(10), dp(4), dp(4), dp(4))
+            minWidth = dp(60)
+            minHeight = dp(52)
         }
-        footer.addView(
-            resize,
-            LinearLayout.LayoutParams(dp(52), dp(44))
-        )
+        footer.addView(resize, LinearLayout.LayoutParams(dp(60), dp(52)))
         card.addView(footer)
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
@@ -215,7 +220,6 @@ class FloatingTrayService : Service() {
                     val dy = (event.rawY - lastRawY).roundToInt()
                     lastRawX = event.rawX
                     lastRawY = event.rawY
-
                     if (dx != 0 || dy != 0) {
                         lp.x += dx
                         lp.y += dy
@@ -240,41 +244,62 @@ class FloatingTrayService : Service() {
     private fun attachResize(handle: View, lp: WindowManager.LayoutParams) {
         var startWidth = 0
         var startHeight = 0
+        var anchorX = 0
+        var anchorY = 0
         var downRawX = 0f
         var downRawY = 0f
+        var previewWidth = 0
+        var previewHeight = 0
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
+                    cancelPendingWindowUpdate()
                     startWidth = lp.width
                     startHeight = lp.height
+                    previewWidth = startWidth
+                    previewHeight = startHeight
+                    anchorX = lp.x
+                    anchorY = lp.y
                     downRawX = event.rawX
                     downRawY = event.rawY
+                    showResizePreview(anchorX, anchorY, startWidth, startHeight)
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    // Use absolute displacement from ACTION_DOWN instead of rounding every
-                    // tiny incremental MOVE. Slow finger motion can otherwise lose sub-pixel
-                    // movement on high-density/high-refresh-rate screens and feel insensitive.
                     val dx = ((event.rawX - downRawX) * RESIZE_SENSITIVITY).roundToInt()
                     val dy = ((event.rawY - downRawY) * RESIZE_SENSITIVITY).roundToInt()
-                    val maxWidth = resources.displayMetrics.widthPixels
-                    val maxHeight = resources.displayMetrics.heightPixels
-                    lp.width = (startWidth + dx)
-                        .coerceIn(dp(MIN_WIDTH_DP), maxOf(dp(MIN_WIDTH_DP), maxWidth))
-                    lp.height = (startHeight + dy)
-                        .coerceIn(dp(MIN_HEIGHT_DP), maxOf(dp(MIN_HEIGHT_DP), maxHeight))
-                    clampPosition(lp)
-                    requestWindowUpdate(lp)
+                    val screenWidth = resources.displayMetrics.widthPixels
+                    val screenHeight = resources.displayMetrics.heightPixels
+                    val minWidth = dp(MIN_WIDTH_DP)
+                    val minHeight = dp(MIN_HEIGHT_DP)
+                    val maxWidth = minOf(dp(MAX_WIDTH_DP), screenWidth - anchorX).coerceAtLeast(minWidth)
+                    val maxHeight = minOf(dp(MAX_HEIGHT_DP), screenHeight - anchorY).coerceAtLeast(minHeight)
+
+                    previewWidth = (startWidth + dx).coerceIn(minWidth, maxWidth)
+                    previewHeight = (startHeight + dy).coerceIn(minHeight, maxHeight)
+                    updateResizePreview(anchorX, anchorY, previewWidth, previewHeight)
                     true
                 }
 
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_UP -> {
                     gestureActive = false
+                    hideResizePreview()
+                    lp.width = previewWidth
+                    lp.height = previewHeight
+                    lp.x = anchorX
+                    lp.y = anchorY
+                    clampPosition(lp)
                     flushWindowUpdate(lp)
                     persistGeometry(lp)
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    gestureActive = false
+                    hideResizePreview()
                     true
                 }
 
@@ -284,12 +309,95 @@ class FloatingTrayService : Service() {
     }
 
     /**
-     * OEM overlay windows can visibly trail the finger if every high-frequency MOVE event
-     * becomes a WindowManager transaction. Keep an immediate leading-edge update, then cap
-     * the remaining transactions to roughly one per 8 ms while always applying the newest
-     * coordinates. This avoids both Binder queues and the extra frame of latency caused by
-     * postOnAnimation on some high-refresh-rate phones.
+     * Render resizing in a separate, non-touchable full-screen window. Only the lightweight
+     * preview view changes size while the finger moves, so the preview follows the finger
+     * immediately even on ROMs where live TYPE_APPLICATION_OVERLAY relayout is sluggish.
+     * The real overlay window is resized once, on ACTION_UP.
      */
+    private fun showResizePreview(x: Int, y: Int, width: Int, height: Int) {
+        hideResizePreview()
+
+        val root = FrameLayout(this)
+        val box = FrameLayout(this).apply {
+            background = GradientDrawable().apply {
+                setColor(Color.argb(36, 18, 155, 120))
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(2), Color.argb(230, 18, 155, 120))
+            }
+        }
+        val label = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.rgb(35, 43, 55))
+        }
+        box.addView(
+            label,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        root.addView(
+            box,
+            FrameLayout.LayoutParams(width, height).apply {
+                leftMargin = x
+                topMargin = y
+            }
+        )
+
+        val previewLp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+            windowAnimations = 0
+        }
+
+        try {
+            windowManager.addView(root, previewLp)
+            resizePreviewRoot = root
+            resizePreviewBox = box
+            resizePreviewLabel = label
+            updateResizePreview(x, y, width, height)
+        } catch (_: Exception) {
+            resizePreviewRoot = null
+            resizePreviewBox = null
+            resizePreviewLabel = null
+        }
+    }
+
+    private fun updateResizePreview(x: Int, y: Int, width: Int, height: Int) {
+        val box = resizePreviewBox ?: return
+        val p = (box.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(width, height)
+        p.width = width
+        p.height = height
+        p.leftMargin = x
+        p.topMargin = y
+        box.layoutParams = p
+        resizePreviewLabel?.text = "${pxToDp(width)} × ${pxToDp(height)} dp"
+    }
+
+    private fun hideResizePreview() {
+        resizePreviewRoot?.let {
+            try {
+                windowManager.removeViewImmediate(it)
+            } catch (_: Exception) {
+            }
+        }
+        resizePreviewRoot = null
+        resizePreviewBox = null
+        resizePreviewLabel = null
+    }
+
     private fun requestWindowUpdate(lp: WindowManager.LayoutParams) {
         val now = SystemClock.uptimeMillis()
         val elapsed = now - lastWindowUpdateAt
@@ -419,7 +527,7 @@ class FloatingTrayService : Service() {
         private const val MIN_HEIGHT_DP = 80
         private const val MAX_HEIGHT_DP = 300
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
-        private const val RESIZE_SENSITIVITY = 1.65f
+        private const val RESIZE_SENSITIVITY = 1.25f
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
