@@ -7,6 +7,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
+/**
+ * Foreground service that owns LuMing's system-level ongoing notification.
+ * When realtime monitoring is enabled it also performs adaptive polling; when it is disabled,
+ * the service stays idle so the notification remains a true foreground-service notification.
+ */
 class RealtimeUsageService : Service() {
     @Volatile
     private var running = false
@@ -22,13 +27,9 @@ class RealtimeUsageService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         val config = TrayStore.loadConfig(this)
-        if (!config.realtimeEnabled || !hasCredential(config)) {
+        val canRefresh = config.realtimeEnabled && hasCredential(config)
+        if (!config.persistentNotificationEnabled && !canRefresh) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -53,9 +54,22 @@ class RealtimeUsageService : Service() {
         var unchangedRounds = 0
         while (running) {
             val config = TrayStore.loadConfig(this)
-            if (!config.realtimeEnabled || !hasCredential(config)) {
+            val canRefresh = config.realtimeEnabled && hasCredential(config)
+
+            if (!config.persistentNotificationEnabled && !canRefresh) {
                 stopSelf()
                 return
+            }
+
+            if (!canRefresh) {
+                // Keep the FGS alive only for the persistent system tray notification.
+                TrayNotification.show(this, TrayStore.loadStats(this))
+                try {
+                    Thread.sleep(IDLE_NOTIFICATION_REFRESH_MS)
+                } catch (_: InterruptedException) {
+                    return
+                }
+                continue
             }
 
             val before = TrayStore.loadStats(this)
@@ -110,11 +124,14 @@ class RealtimeUsageService : Service() {
     }
 
     companion object {
-        private const val ACTION_STOP = "com.luming.tray.STOP_REALTIME"
+        private const val IDLE_NOTIFICATION_REFRESH_MS = 5L * 60L * 1000L
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
-            if (!config.realtimeEnabled || !hasCredential(config)) return
+            val shouldRun = config.persistentNotificationEnabled ||
+                (config.realtimeEnabled && hasCredential(config))
+            if (!shouldRun) return
+
             val intent = Intent(context, RealtimeUsageService::class.java)
             try {
                 if (Build.VERSION.SDK_INT >= 26) {
@@ -129,7 +146,13 @@ class RealtimeUsageService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, RealtimeUsageService::class.java))
+            // Realtime monitoring can be turned off without tearing down the permanent tray.
+            val config = TrayStore.loadConfig(context)
+            if (config.persistentNotificationEnabled) {
+                start(context)
+            } else {
+                context.stopService(Intent(context, RealtimeUsageService::class.java))
+            }
         }
 
         private fun hasCredential(config: TrayConfig): Boolean =
