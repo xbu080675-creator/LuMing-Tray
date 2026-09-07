@@ -162,8 +162,12 @@ class MainActivity : Activity() {
             startActivity(Intent(this@MainActivity, AnalysisActivity::class.java))
         }, matchHeight(54).apply { topMargin = dp(10) })
 
+        root.addView(actionButton("模型可用性 · 渠道 / 模型 / 稳定性") {
+            startActivity(Intent(this@MainActivity, ModelAvailabilityActivity::class.java))
+        }, matchHeight(54).apply { topMargin = dp(10) })
+
         root.addView(TextView(this).apply {
-            text = "消费分析会优先读取站点的趋势、模型与分组明细；站点不支持时自动使用本机历史快照。"
+            text = "消费分析负责成本归因；模型可用性直接读取站点的渠道目录与探活状态。"
             textSize = 11f
             setTextColor(textMuted())
             setPadding(dp(4), dp(9), dp(4), 0)
@@ -187,7 +191,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap())
 
         root.addView(TextView(this).apply {
-            text = "LuMing Tray 0.10.0 · Cost Intelligence"
+            text = "LuMing Tray 0.12.0 · Model Availability"
             textSize = 10.5f
             setTextColor(textMuted())
             gravity = Gravity.CENTER_HORIZONTAL
