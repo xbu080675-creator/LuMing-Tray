@@ -25,7 +25,7 @@
         <activity-alias
             android:name=".MainActivity"
             android:exported="true"
-            android:targetActivity=".StartupProbeActivity">
+            android:targetActivity=".SafeMainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -35,13 +35,13 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".AccountActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
@@ -53,22 +53,22 @@
         <activity
             android:name=".AnalysisActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".UsageExplorerActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".ModelAvailabilityActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".ApiKeyManagementActivity"
             android:exported="false"
-            android:parentActivityName=".StartupProbeActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
