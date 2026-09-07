@@ -270,7 +270,7 @@ class AnalysisActivity : Activity() {
         })
         val track = LinearLayout(this).apply {
             background = GradientDrawable().apply {
-                setColor(Color.rgb(222, 230, 233))
+                setColor(LuMingTheme.divider(this@AnalysisActivity))
                 cornerRadius = dp(999).toFloat()
             }
         }

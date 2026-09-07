@@ -78,5 +78,7 @@ object LuMingTheme {
     fun activeBg(context: Context) = if (isDark(context)) Color.rgb(21, 50, 44) else Color.rgb(225, 244, 239)
     fun activeBorder(context: Context) = if (isDark(context)) Color.rgb(43, 92, 79) else Color.rgb(199, 231, 222)
     fun positivePill(context: Context) = if (isDark(context)) Color.rgb(21, 52, 45) else Color.rgb(222, 243, 237)
+    fun dangerText(context: Context) = if (isDark(context)) Color.rgb(244, 157, 151) else Color.rgb(158, 90, 85)
+    fun dangerPill(context: Context) = if (isDark(context)) Color.rgb(62, 35, 36) else Color.rgb(247, 231, 229)
     fun neutralPill(context: Context) = if (isDark(context)) Color.rgb(38, 46, 53) else Color.rgb(232, 237, 240)
 }

@@ -252,8 +252,11 @@ class ApiKeyManagementActivity : FragmentActivity() {
             text = if (active) "启用" else "停用"
             textSize = 10.5f
             gravity = Gravity.CENTER
-            setTextColor(if (active) accentDark() else Color.rgb(158, 90, 85))
-            background = pillBackground(if (active) Color.rgb(222, 243, 237) else Color.rgb(247, 231, 229))
+            setTextColor(if (active) accentDark() else LuMingTheme.dangerText(this@ApiKeyManagementActivity))
+            background = pillBackground(
+                if (active) LuMingTheme.positivePill(this@ApiKeyManagementActivity)
+                else LuMingTheme.dangerPill(this@ApiKeyManagementActivity)
+            )
             setPadding(dp(10), dp(5), dp(10), dp(5))
         })
         card.addView(header)

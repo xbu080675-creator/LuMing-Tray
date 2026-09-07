@@ -346,8 +346,9 @@ class AccountActivity : FragmentActivity() {
 
     private fun styleTheme(button: Button, active: Boolean) {
         button.background = GradientDrawable().apply {
-            setColor(if (active) Color.rgb(225, 244, 239) else Color.rgb(239, 244, 246)); cornerRadius = dp(15).toFloat()
-            setStroke(dp(1), if (active) Color.rgb(199, 231, 222) else Color.rgb(221, 229, 233))
+            setColor(if (active) LuMingTheme.activeBg(this@AccountActivity) else LuMingTheme.panelAlt(this@AccountActivity))
+            cornerRadius = dp(15).toFloat()
+            setStroke(dp(1), if (active) LuMingTheme.activeBorder(this@AccountActivity) else LuMingTheme.border(this@AccountActivity))
         }
         button.setTextColor(if (active) accentDark() else textSecondary())
     }
@@ -406,11 +407,17 @@ class AccountActivity : FragmentActivity() {
     }
 
     private fun statusChip(textValue: String, good: Boolean) = TextView(this).apply {
-        text = textValue; textSize = 10f; gravity = Gravity.CENTER; setTextColor(if (good) accentDark() else Color.rgb(180, 93, 84))
-        setPadding(dp(10), dp(5), dp(10), dp(5)); background = pillBackground(if (good) Color.rgb(222, 243, 237) else Color.rgb(247, 231, 229))
+        text = textValue
+        textSize = 10f
+        gravity = Gravity.CENTER
+        setTextColor(if (good) accentDark() else LuMingTheme.dangerText(this@AccountActivity))
+        setPadding(dp(10), dp(5), dp(10), dp(5))
+        background = pillBackground(if (good) LuMingTheme.positivePill(this@AccountActivity) else LuMingTheme.dangerPill(this@AccountActivity))
     }
 
-    private fun divider() = View(this).apply { setBackgroundColor(Color.rgb(215, 224, 228)) }.also { it.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)) }
+    private fun divider() = View(this).apply {
+        setBackgroundColor(LuMingTheme.divider(this@AccountActivity))
+    }.also { it.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)) }
     private fun info(value: String) = TextView(this).apply { text = value; textSize = 10.8f; setTextColor(textMuted()) }
     private fun sectionTitle(value: String) = TextView(this).apply { text = value; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textSecondary()); setPadding(dp(3), dp(22), dp(3), dp(9)) }
 
