@@ -9,7 +9,7 @@ class RefreshReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val pending = goAsync()
         UsageClient.refresh(context) {
-            TrayNotification.show(context)
+            runCatching { TrayNotification.show(context) }
             pending.finish()
         }
     }
@@ -17,21 +17,23 @@ class RefreshReceiver : BroadcastReceiver() {
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-            TrayNotification.show(context)
-            TrayScheduler.ensure(context)
-            val config = TrayStore.loadConfig(context)
-            if (
-                config.realtimeEnabled ||
-                config.persistentNotificationEnabled ||
-                config.webAuthToken.isNotBlank() ||
-                config.webRefreshToken.isNotBlank()
-            ) {
-                RealtimeUsageService.start(context)
-            }
-            if (config.floatingEnabled && Settings.canDrawOverlays(context)) {
-                FloatingTrayService.start(context)
-            }
+        val action = intent?.action ?: return
+        if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+
+        runCatching { TrayNotification.show(context) }
+        runCatching { TrayScheduler.ensure(context) }
+        val config = TrayStore.loadConfig(context)
+        if (
+            config.realtimeEnabled ||
+            config.persistentNotificationEnabled ||
+            config.floatingEnabled ||
+            config.webAuthToken.isNotBlank() ||
+            config.webRefreshToken.isNotBlank()
+        ) {
+            RealtimeUsageService.start(context)
+        }
+        if (config.floatingEnabled && Settings.canDrawOverlays(context)) {
+            FloatingTrayService.start(context)
         }
     }
 }
