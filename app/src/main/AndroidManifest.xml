@@ -15,24 +15,29 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
+            android:name=".SafeMainActivity"
+            android:exported="false" />
+
+        <activity-alias
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:targetActivity=".SafeMainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".AccountActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
@@ -44,22 +49,22 @@
         <activity
             android:name=".AnalysisActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".UsageExplorerActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".ModelAvailabilityActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".SafeMainActivity" />
 
         <activity
             android:name=".ApiKeyManagementActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity"
+            android:parentActivityName=".SafeMainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
