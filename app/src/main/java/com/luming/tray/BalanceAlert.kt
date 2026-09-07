@@ -19,10 +19,6 @@ object BalanceAlert {
     private const val STATE_CRITICAL = 2
 
     fun evaluate(context: Context, stats: UsageStats) {
-        // Every successful stats write also feeds local cost history. The recorder throttles
-        // high-frequency refreshes into five-minute samples, so realtime monitoring stays compact.
-        UsageHistory.recordSnapshot(context, stats)
-
         val config = TrayStore.loadConfig(context)
         if (!config.balanceAlertEnabled) {
             clear(context)
