@@ -34,7 +34,6 @@ class MainActivity : Activity() {
     private lateinit var ioValueText: TextView
     private lateinit var perfValueText: TextView
     private lateinit var updateValueText: TextView
-
     private lateinit var diagnosticText: TextView
     private lateinit var loginStateText: TextView
     private lateinit var baseUrlField: EditText
@@ -55,7 +54,6 @@ class MainActivity : Activity() {
         window.navigationBarColor = bgColor()
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-
         setContentView(buildUi())
         loadConfigIntoFields()
         requestNotificationPermissionIfNeeded()
@@ -86,17 +84,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(20), dp(18), dp(34))
             setOnApplyWindowInsetsListener { view, insets ->
-                val top = if (Build.VERSION.SDK_INT >= 30) {
-                    insets.getInsets(WindowInsets.Type.statusBars()).top
-                } else {
-                    @Suppress("DEPRECATION")
-                    insets.systemWindowInsetTop
+                val top = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(WindowInsets.Type.statusBars()).top else {
+                    @Suppress("DEPRECATION") insets.systemWindowInsetTop
                 }
-                val bottom = if (Build.VERSION.SDK_INT >= 30) {
-                    insets.getInsets(WindowInsets.Type.navigationBars()).bottom
-                } else {
-                    @Suppress("DEPRECATION")
-                    insets.systemWindowInsetBottom
+                val bottom = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(WindowInsets.Type.navigationBars()).bottom else {
+                    @Suppress("DEPRECATION") insets.systemWindowInsetBottom
                 }
                 view.setPadding(dp(18), dp(16) + top, dp(18), dp(24) + bottom)
                 insets
@@ -108,70 +100,57 @@ class MainActivity : Activity() {
 
         root.addView(sectionTitle("今日概览"))
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val costCard = metricCard("今日消费", "USD")
-        todayCostValueText = costCard.second
-        row1.addView(costCard.first, weightedCardParams(endMargin = 6))
-        val requestCard = metricCard("请求次数", "REQUESTS")
-        requestsValueText = requestCard.second
-        row1.addView(requestCard.first, weightedCardParams(startMargin = 6))
+        val cost = metricCard("今日消费", "USD"); todayCostValueText = cost.second
+        val req = metricCard("请求次数", "REQUESTS"); requestsValueText = req.second
+        row1.addView(cost.first, weightedCardParams(endMargin = 6))
+        row1.addView(req.first, weightedCardParams(startMargin = 6))
         root.addView(row1)
 
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val tokenCard = metricCard("今日 Token", "TOKENS")
-        tokenValueText = tokenCard.second
-        row2.addView(tokenCard.first, weightedCardParams(endMargin = 6))
-        val responseCard = metricCard("平均响应", "LATENCY")
-        responseValueText = responseCard.second
-        row2.addView(responseCard.first, weightedCardParams(startMargin = 6))
+        val token = metricCard("今日 Token", "TOKENS"); tokenValueText = token.second
+        val response = metricCard("平均响应", "LATENCY"); responseValueText = response.second
+        row2.addView(token.first, weightedCardParams(endMargin = 6))
+        row2.addView(response.first, weightedCardParams(startMargin = 6))
         root.addView(row2, matchWrap().apply { topMargin = dp(12) })
 
-        val perfPanel = softPanel().apply {
+        val perf = softPanel().apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-        val ioBox = smallMetricBox("输入 / 输出")
-        ioValueText = ioBox.second
-        perfPanel.addView(ioBox.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        perfPanel.addView(View(this).apply { setBackgroundColor(Color.rgb(215, 224, 228)) },
-            LinearLayout.LayoutParams(dp(1), dp(42)).apply { leftMargin = dp(12); rightMargin = dp(12) })
-        val rpmBox = smallMetricBox("RPM / TPM")
-        perfValueText = rpmBox.second
-        perfPanel.addView(rpmBox.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(perfPanel, matchWrap().apply { topMargin = dp(12) })
+        val io = smallMetricBox("输入 / 输出"); ioValueText = io.second
+        val rpm = smallMetricBox("RPM / TPM"); perfValueText = rpm.second
+        perf.addView(io.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        perf.addView(View(this).apply { setBackgroundColor(Color.rgb(215, 224, 228)) }, LinearLayout.LayoutParams(dp(1), dp(42)).apply {
+            leftMargin = dp(12); rightMargin = dp(12)
+        })
+        perf.addView(rpm.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(perf, matchWrap().apply { topMargin = dp(12) })
 
         root.addView(sectionTitle("快捷控制"))
-        val actions1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         realtimeButton = actionButton("近实时监控") { toggleRealtime() }
         floatingButton = actionButton("悬浮窗") { toggleFloating() }
-        actions1.addView(realtimeButton, weightedActionParams(endMargin = 6))
-        actions1.addView(floatingButton, weightedActionParams(startMargin = 6))
-        root.addView(actions1)
+        controls.addView(realtimeButton, weightedActionParams(endMargin = 6))
+        controls.addView(floatingButton, weightedActionParams(startMargin = 6))
+        root.addView(controls)
 
-        val actions2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions2.addView(actionButton("立即充值") {
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(actionButton("立即充值") {
             val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
             if (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) saveFields(baseUrl)
             startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
         }, weightedActionParams(endMargin = 6))
         refreshButton = actionButton("刷新数据") { saveAndRefresh() }
-        actions2.addView(refreshButton, weightedActionParams(startMargin = 6))
-        root.addView(actions2, matchWrap().apply { topMargin = dp(10) })
+        actions.addView(refreshButton, weightedActionParams(startMargin = 6))
+        root.addView(actions, matchWrap().apply { topMargin = dp(10) })
 
-        root.addView(actionButton("消费分析 · 看看钱花在哪里") {
-            startActivity(Intent(this@MainActivity, AnalysisActivity::class.java))
-        }, matchHeight(54).apply { topMargin = dp(10) })
-
-        root.addView(actionButton("模型可用性 · 渠道 / 模型 / 稳定性") {
-            startActivity(Intent(this@MainActivity, ModelAvailabilityActivity::class.java))
-        }, matchHeight(54).apply { topMargin = dp(10) })
-
-        root.addView(actionButton("API 管理 · Key / 分组 / 配额 / 限速") {
-            startActivity(Intent(this@MainActivity, ApiKeyManagementActivity::class.java))
-        }, matchHeight(54).apply { topMargin = dp(10) })
-
+        root.addView(navButton("消费分析 · 看看钱花在哪里", AnalysisActivity::class.java))
+        root.addView(navButton("用量中心 · 分布 / 趋势 / 请求日志", UsageExplorerActivity::class.java))
+        root.addView(navButton("模型可用性 · 渠道 / 模型 / 稳定性", ModelAvailabilityActivity::class.java))
+        root.addView(navButton("API 管理 · Key / 分组 / 配额 / 限速", ApiKeyManagementActivity::class.java))
         root.addView(TextView(this).apply {
-            text = "消费分析负责成本归因；模型可用性读取渠道探活；API 管理直接管理站点 Key、分组和额度。"
+            text = "消费分析负责成本归因；用量中心看模型/分组/平台分布、Token 趋势和最近请求；模型可用性盯线路；API 管理负责 Key。"
             textSize = 11f
             setTextColor(textMuted())
             setPadding(dp(4), dp(9), dp(4), 0)
@@ -193,9 +172,8 @@ class MainActivity : Activity() {
             elevation = dp(3).toFloat()
         }
         root.addView(diagnosticText, matchWrap())
-
         root.addView(TextView(this).apply {
-            text = "LuMing Tray 0.14.0 · Native API Management"
+            text = "LuMing Tray 0.15.0 · Usage Explorer"
             textSize = 10.5f
             setTextColor(textMuted())
             gravity = Gravity.CENTER_HORIZONTAL
@@ -206,45 +184,23 @@ class MainActivity : Activity() {
         return scroll
     }
 
+    private fun navButton(label: String, target: Class<out Activity>): View = actionButton(label) {
+        startActivity(Intent(this, target))
+    }.also { it.layoutParams = matchHeight(54).apply { topMargin = dp(10) } }
+
     private fun buildHeader(): View {
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(10))
-        }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, dp(2), dp(10)) }
         header.addView(TextView(this).apply {
-            text = "LM"
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                setColor(accentColor())
-                cornerRadius = dp(16).toFloat()
-            }
+            text = "LM"; textSize = 15f; gravity = Gravity.CENTER; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(accentColor()); cornerRadius = dp(16).toFloat() }
             elevation = dp(5).toFloat()
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-        titleBox.addView(TextView(this).apply {
-            text = "LuMing Tray"
-            textSize = 25f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(textPrimary())
-        })
-        titleBox.addView(TextView(this).apply {
-            text = "API USAGE DASHBOARD"
-            textSize = 10.5f
-            letterSpacing = 0.12f
-            setTextColor(textMuted())
-        })
-        header.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+        title.addView(TextView(this).apply { text = "LuMing Tray"; textSize = 25f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()) })
+        title.addView(TextView(this).apply { text = "API USAGE DASHBOARD"; textSize = 10.5f; letterSpacing = 0.12f; setTextColor(textMuted()) })
+        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(TextView(this).apply {
-            text = "安全存储"
-            textSize = 10.5f
-            gravity = Gravity.CENTER
-            setTextColor(accentDark())
-            background = pillBackground(Color.rgb(223, 242, 237))
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            text = "安全存储"; textSize = 10.5f; gravity = Gravity.CENTER; setTextColor(accentDark()); background = pillBackground(Color.rgb(223, 242, 237)); setPadding(dp(10), dp(6), dp(10), dp(6))
         })
         return header
     }
@@ -252,32 +208,13 @@ class MainActivity : Activity() {
     private fun buildHero(): View {
         val hero = softPanel().apply { setPadding(dp(20), dp(18), dp(20), dp(18)) }
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        top.addView(TextView(this).apply {
-            text = "账户余额"
-            textSize = 13f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(textMuted())
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        loginStateText = TextView(this).apply {
-            textSize = 10.5f
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-        }
+        top.addView(TextView(this).apply { text = "账户余额"; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textMuted()) }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        loginStateText = TextView(this).apply { textSize = 10.5f; gravity = Gravity.CENTER; setPadding(dp(10), dp(5), dp(10), dp(5)) }
         top.addView(loginStateText)
         hero.addView(top)
-        balanceValueText = TextView(this).apply {
-            text = "--"
-            textSize = 38f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(accentColor())
-            setPadding(0, dp(8), 0, dp(2))
-        }
+        balanceValueText = TextView(this).apply { text = "--"; textSize = 38f; setTypeface(typeface, Typeface.BOLD); setTextColor(accentColor()); setPadding(0, dp(8), 0, dp(2)) }
+        updateValueText = TextView(this).apply { text = "等待首次读取"; textSize = 11.5f; setTextColor(textMuted()) }
         hero.addView(balanceValueText)
-        updateValueText = TextView(this).apply {
-            text = "等待首次读取"
-            textSize = 11.5f
-            setTextColor(textMuted())
-        }
         hero.addView(updateValueText)
         return hero
     }
@@ -286,25 +223,13 @@ class MainActivity : Activity() {
         val panel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        title.addView(TextView(this).apply {
-            text = "低余额保护"
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(textPrimary())
-        })
-        title.addView(TextView(this).apply {
-            text = "跌破阈值提醒，余额 ≤ 0 自动升级"
-            textSize = 10.8f
-            setTextColor(textMuted())
-            setPadding(0, dp(3), 0, 0)
-        })
+        title.addView(TextView(this).apply { text = "低余额保护"; textSize = 14f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()) })
+        title.addView(TextView(this).apply { text = "跌破阈值提醒，余额 ≤ 0 自动升级"; textSize = 10.8f; setTextColor(textMuted()); setPadding(0, dp(3), 0, 0) })
         head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         balanceAlertButton = actionButton("预警") { toggleBalanceAlert() }.apply { textSize = 11.5f }
         head.addView(balanceAlertButton, LinearLayout.LayoutParams(dp(104), dp(44)))
         panel.addView(head)
-        balanceAlertThresholdField = editField("预警阈值，例如 0.50").apply {
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
+        balanceAlertThresholdField = editField("预警阈值，例如 0.50").apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL }
         panel.addView(balanceAlertThresholdField, matchHeight(52).apply { topMargin = dp(14) })
         return panel
     }
@@ -328,9 +253,7 @@ class MainActivity : Activity() {
         }, matchHeight(50).apply { topMargin = dp(14) })
         panel.addView(TextView(this).apply {
             text = "凭据落盘：${SecureVault.securityLabel(this@MainActivity)}"
-            textSize = 10.5f
-            setTextColor(accentDark())
-            setPadding(dp(3), dp(10), dp(3), 0)
+            textSize = 10.5f; setTextColor(accentDark()); setPadding(dp(3), dp(10), dp(3), 0)
         })
         return panel
     }
@@ -341,20 +264,12 @@ class MainActivity : Activity() {
         panel.addView(accessTokenField, matchHeight(52))
         panel.addView(TextView(this).apply {
             text = "推荐优先使用网页登录授权。API Key、Access Token、Cookie 与网页登录 Token 均进入本机加密仓库。"
-            textSize = 10.8f
-            setTextColor(textMuted())
-            setPadding(dp(2), dp(10), dp(2), 0)
+            textSize = 10.8f; setTextColor(textMuted()); setPadding(dp(2), dp(10), dp(2), 0)
         })
         return panel
     }
 
-    private fun fieldLabel(textValue: String) = TextView(this).apply {
-        text = textValue
-        textSize = 11f
-        setTypeface(typeface, Typeface.BOLD)
-        setTextColor(textMuted())
-        setPadding(dp(2), 0, 0, dp(6))
-    }
+    private fun fieldLabel(value: String) = TextView(this).apply { text = value; textSize = 11f; setTypeface(typeface, Typeface.BOLD); setTextColor(textMuted()); setPadding(dp(2), 0, 0, dp(6)) }
 
     private fun loadConfigIntoFields() {
         val config = TrayStore.loadConfig(this)
@@ -366,8 +281,7 @@ class MainActivity : Activity() {
 
     private fun saveFields(baseUrl: String = baseUrlField.text.toString().trim().trimEnd('/')) {
         val old = TrayStore.loadConfig(this)
-        val threshold = balanceAlertThresholdField.text.toString().trim().toDoubleOrNull()?.coerceAtLeast(0.0)
-            ?: old.balanceAlertThreshold
+        val threshold = balanceAlertThresholdField.text.toString().trim().toDoubleOrNull()?.coerceAtLeast(0.0) ?: old.balanceAlertThreshold
         val alertChanged = threshold != old.balanceAlertThreshold
         TrayStore.saveConfig(this, old.copy(
             baseUrl = baseUrl,
@@ -445,8 +359,7 @@ class MainActivity : Activity() {
     private fun maybeAutoRefresh() {
         if (autoRefreshInFlight) return
         val config = TrayStore.loadConfig(this)
-        val hasCredential = config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank() ||
-            config.consoleCookie.isNotBlank() || config.accessToken.isNotBlank() || config.apiKey.isNotBlank()
+        val hasCredential = config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank() || config.consoleCookie.isNotBlank() || config.accessToken.isNotBlank() || config.apiKey.isNotBlank()
         if (!hasCredential) return
         val stats = TrayStore.loadStats(this)
         if (stats != null && System.currentTimeMillis() - stats.updatedAt < AUTO_REFRESH_MIN_AGE_MS) return
@@ -476,8 +389,7 @@ class MainActivity : Activity() {
             config.floatingEnabled -> "悬浮窗 · 授权中"
             else -> "悬浮窗 · OFF"
         })
-        styleStateButton(balanceAlertButton, config.balanceAlertEnabled,
-            if (config.balanceAlertEnabled) "预警 · ON" else "预警 · OFF")
+        styleStateButton(balanceAlertButton, config.balanceAlertEnabled, if (config.balanceAlertEnabled) "预警 · ON" else "预警 · OFF")
 
         val loginOk = config.webAuthToken.isNotBlank() || config.consoleCookie.isNotBlank()
         loginStateText.text = when {
@@ -534,12 +446,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun metricCard(label: String, microLabel: String): Pair<LinearLayout, TextView> {
+    private fun metricCard(label: String, micro: String): Pair<LinearLayout, TextView> {
         val card = softPanel().apply { setPadding(dp(15), dp(14), dp(15), dp(14)); minimumHeight = dp(112) }
-        card.addView(TextView(this).apply { text = microLabel; textSize = 8.5f; letterSpacing = 0.1f; setTextColor(textMuted()) })
-        val value = TextView(this).apply {
-            text = "--"; textSize = 23f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(8), 0, dp(4))
-        }
+        card.addView(TextView(this).apply { text = micro; textSize = 8.5f; letterSpacing = 0.1f; setTextColor(textMuted()) })
+        val value = TextView(this).apply { text = "--"; textSize = 23f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(8), 0, dp(4)) }
         card.addView(value)
         card.addView(TextView(this).apply { text = label; textSize = 11.5f; setTextColor(textSecondary()) })
         return card to value
@@ -548,9 +458,7 @@ class MainActivity : Activity() {
     private fun smallMetricBox(label: String): Pair<LinearLayout, TextView> {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(TextView(this).apply { text = label; textSize = 9.8f; setTextColor(textMuted()) })
-        val value = TextView(this).apply {
-            text = "--"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(5), 0, 0)
-        }
+        val value = TextView(this).apply { text = "--"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(5), 0, 0) }
         box.addView(value)
         return box to value
     }
@@ -577,52 +485,26 @@ class MainActivity : Activity() {
     }
 
     private fun editField(hintText: String): EditText = EditText(this).apply {
-        hint = hintText
-        textSize = 13.5f
-        setSingleLine(true)
-        setPadding(dp(14), 0, dp(14), 0)
-        setTextColor(textPrimary())
-        setHintTextColor(Color.rgb(145, 154, 164))
-        background = inputBackground()
-        elevation = dp(2).toFloat()
+        hint = hintText; textSize = 13.5f; setSingleLine(true); setPadding(dp(14), 0, dp(14), 0)
+        setTextColor(textPrimary()); setHintTextColor(Color.rgb(145, 154, 164)); background = inputBackground(); elevation = dp(2).toFloat()
     }
-
     private fun secretField(hintText: String): EditText = editField(hintText).apply {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         transformationMethod = PasswordTransformationMethod.getInstance()
     }
-
-    private fun softPanel(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = panelBackground()
-        elevation = dp(7).toFloat()
-    }
-
-    private fun sectionTitle(textValue: String): TextView = TextView(this).apply {
-        text = textValue; textSize = 13f; setTextColor(textSecondary()); setTypeface(typeface, Typeface.BOLD); setPadding(dp(3), dp(22), dp(3), dp(9))
-    }
-
-    private fun panelBackground() = GradientDrawable().apply {
-        setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(210, 255, 255, 255))
-    }
+    private fun softPanel(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = panelBackground(); elevation = dp(7).toFloat() }
+    private fun sectionTitle(value: String): TextView = TextView(this).apply { text = value; textSize = 13f; setTextColor(textSecondary()); setTypeface(typeface, Typeface.BOLD); setPadding(dp(3), dp(22), dp(3), dp(9)) }
+    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(210, 255, 255, 255)) }
     private fun buttonBackground(active: Boolean) = GradientDrawable().apply {
         setColor(if (active) Color.rgb(225, 244, 239) else Color.rgb(239, 244, 246)); cornerRadius = dp(17).toFloat()
         setStroke(dp(1), if (active) Color.rgb(199, 231, 222) else Color.rgb(221, 229, 233))
     }
-    private fun inputBackground() = GradientDrawable().apply {
-        setColor(Color.rgb(235, 241, 244)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), Color.rgb(218, 227, 231))
-    }
+    private fun inputBackground() = GradientDrawable().apply { setColor(Color.rgb(235, 241, 244)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), Color.rgb(218, 227, 231)) }
     private fun pillBackground(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(999).toFloat() }
-
-    private fun weightedCardParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-        leftMargin = dp(startMargin); rightMargin = dp(endMargin)
-    }
-    private fun weightedActionParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-        leftMargin = dp(startMargin); rightMargin = dp(endMargin)
-    }
+    private fun weightedCardParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(startMargin); rightMargin = dp(endMargin) }
+    private fun weightedActionParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, dp(52), 1f).apply { leftMargin = dp(startMargin); rightMargin = dp(endMargin) }
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     private fun matchHeight(heightDp: Int) = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp))
-
     private fun bgColor() = Color.rgb(232, 239, 242)
     private fun panelColor() = Color.rgb(242, 247, 249)
     private fun accentColor() = Color.rgb(25, 157, 130)
