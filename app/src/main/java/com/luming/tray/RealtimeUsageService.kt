@@ -8,13 +8,14 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 
 /**
- * Long-lived foreground monitor.
+ * Single long-lived foreground runtime for LuMing continuous work.
  *
- * The service now supervises its own worker. A transient network/JSON/provider exception must not
- * permanently kill the polling thread while leaving `running = true`; that state looked alive to
- * Android but silently stopped refreshing until the process was recreated.
+ * It supervises the polling worker and also keeps the optional floating overlay attached. A dead
+ * worker or independently reclaimed overlay is repaired without requiring the user to reopen the
+ * dashboard.
  */
 class RealtimeUsageService : Service() {
     @Volatile private var running = false
@@ -36,7 +37,14 @@ class RealtimeUsageService : Service() {
                 val now = System.currentTimeMillis()
                 val dead = worker?.isAlive != true
                 val stale = lastHeartbeatAt > 0L && now - lastHeartbeatAt > WORKER_STALE_MS
-                if (dead || stale) startWorker(force = true)
+                if (dead || stale) {
+                    RuntimeHealth.markError(this@RealtimeUsageService, if (dead) "worker_dead" else "worker_stale")
+                    startWorker(force = true)
+                }
+                syncFloatingOverlay()
+                RuntimeHealth.markServiceHeartbeat(this@RealtimeUsageService, now)
+            }.onFailure {
+                RuntimeHealth.markError(this@RealtimeUsageService, "watchdog:${it.javaClass.simpleName}")
             }
             if (running) watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
         }
@@ -51,9 +59,10 @@ class RealtimeUsageService : Service() {
                 TrayNotification.buildNotification(this, TrayStore.loadStats(this))
             )
             foregroundReady = true
-        } catch (_: Exception) {
-            // Do not take the whole app process down if a vendor rejects the FGS notification.
+            RuntimeHealth.markServiceStarted(this)
+        } catch (e: Exception) {
             foregroundReady = false
+            RuntimeHealth.markError(this, "foreground:${e.javaClass.simpleName}")
             stopSelf()
         }
     }
@@ -70,6 +79,7 @@ class RealtimeUsageService : Service() {
 
         running = true
         startWorker(force = false)
+        syncFloatingOverlay()
         watchdogHandler.removeCallbacks(watchdog)
         watchdogHandler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
         return START_STICKY
@@ -82,6 +92,7 @@ class RealtimeUsageService : Service() {
         worker?.interrupt()
         worker = null
         foregroundReady = false
+        RuntimeHealth.markServiceStopped(this)
         super.onDestroy()
     }
 
@@ -97,6 +108,7 @@ class RealtimeUsageService : Service() {
         workerGeneration += 1
         val generation = workerGeneration
         lastHeartbeatAt = System.currentTimeMillis()
+        RuntimeHealth.markWorkerStarted(this, generation, lastHeartbeatAt)
         worker = Thread({ runLoop(generation) }, "LuMing-Realtime-$generation").apply { start() }
     }
 
@@ -108,12 +120,15 @@ class RealtimeUsageService : Service() {
 
         while (running && generation == workerGeneration) {
             lastHeartbeatAt = System.currentTimeMillis()
+            RuntimeHealth.markWorkerHeartbeat(this, generation, lastHeartbeatAt)
 
             try {
                 val config = TrayStore.loadConfig(this)
                 val canRefreshUsage = config.realtimeEnabled && hasCredential(config)
                 val canMonitorModels = hasWebCredential(config)
-                if (!config.persistentNotificationEnabled && !canRefreshUsage && !canMonitorModels) {
+                if (!config.persistentNotificationEnabled && !config.floatingEnabled &&
+                    !canRefreshUsage && !canMonitorModels
+                ) {
                     stopSelf()
                     return
                 }
@@ -130,15 +145,18 @@ class RealtimeUsageService : Service() {
                             val changed = materiallyChanged(before, after)
                             unchangedRounds = if (changed) 0 else unchangedRounds + 1
                             if (result.success && after != null) {
+                                RuntimeHealth.markUsageSuccess(this)
                                 runCatching { TrayNotification.show(this, after) }
+                            } else {
+                                RuntimeHealth.markUsageFailure(this, result.message)
                             }
 
                             val interactive = getSystemService(PowerManager::class.java).isInteractive
                             nextUsageAt = System.currentTimeMillis() +
                                 nextUsageDelayMs(interactive, unchangedRounds, result.success)
-                        } catch (_: Exception) {
-                            // A single provider/network/parser failure should only delay this job.
+                        } catch (e: Exception) {
                             unchangedRounds = 0
+                            RuntimeHealth.markUsageFailure(this, e.javaClass.simpleName)
                             val interactive = runCatching {
                                 getSystemService(PowerManager::class.java).isInteractive
                             }.getOrDefault(false)
@@ -151,6 +169,7 @@ class RealtimeUsageService : Service() {
                 }
 
                 lastHeartbeatAt = System.currentTimeMillis()
+                RuntimeHealth.markWorkerHeartbeat(this, generation, lastHeartbeatAt)
                 now = System.currentTimeMillis()
 
                 if (canMonitorModels) {
@@ -160,9 +179,11 @@ class RealtimeUsageService : Service() {
                     }
                     if (now >= nextModelAt) {
                         try {
-                            ModelAvailabilityClient.loadSummaryBlocking(this)
-                        } catch (_: Exception) {
-                            // Isolate model monitoring from usage polling and the service lifetime.
+                            val report = ModelAvailabilityClient.loadSummaryBlocking(this)
+                            if (report.monitors.isNotEmpty()) RuntimeHealth.markModelSuccess(this)
+                            else RuntimeHealth.markModelFailure(this, report.message)
+                        } catch (e: Exception) {
+                            RuntimeHealth.markModelFailure(this, e.javaClass.simpleName)
                         }
                         nextModelAt = System.currentTimeMillis() + MODEL_MONITOR_INTERVAL_MS
                     }
@@ -171,6 +192,7 @@ class RealtimeUsageService : Service() {
                 }
 
                 lastHeartbeatAt = System.currentTimeMillis()
+                RuntimeHealth.markWorkerHeartbeat(this, generation, lastHeartbeatAt)
                 now = System.currentTimeMillis()
 
                 if (nextTrayRefreshAt == 0L || now >= nextTrayRefreshAt) {
@@ -191,8 +213,8 @@ class RealtimeUsageService : Service() {
                 } catch (_: InterruptedException) {
                     return
                 }
-            } catch (_: Exception) {
-                // Supervisor barrier: never let one iteration silently kill the worker forever.
+            } catch (e: Exception) {
+                RuntimeHealth.markError(this, "loop:${e.javaClass.simpleName}")
                 lastHeartbeatAt = System.currentTimeMillis()
                 try {
                     Thread.sleep(LOOP_ERROR_BACKOFF_MS)
@@ -203,9 +225,20 @@ class RealtimeUsageService : Service() {
         }
     }
 
+    private fun syncFloatingOverlay() {
+        val config = TrayStore.loadConfig(this)
+        if (config.floatingEnabled && Settings.canDrawOverlays(this)) {
+            runCatching { startService(Intent(this, FloatingTrayService::class.java)) }
+                .onFailure { RuntimeHealth.markError(this, "overlay_start:${it.javaClass.simpleName}") }
+        } else {
+            runCatching { stopService(Intent(this, FloatingTrayService::class.java)) }
+        }
+    }
+
     private fun shouldKeepRunning(): Boolean {
         val config = TrayStore.loadConfig(this)
         return config.persistentNotificationEnabled ||
+            config.floatingEnabled ||
             (config.realtimeEnabled && hasCredential(config)) ||
             hasWebCredential(config)
     }
@@ -256,26 +289,33 @@ class RealtimeUsageService : Service() {
         private const val WORKER_STALE_MS = 3L * 60L * 1000L
 
         fun start(context: Context) {
-            val config = TrayStore.loadConfig(context)
+            val app = context.applicationContext
+            val config = TrayStore.loadConfig(app)
             val shouldRun = config.persistentNotificationEnabled ||
+                config.floatingEnabled ||
                 (config.realtimeEnabled && hasCredential(config)) ||
                 hasWebCredential(config)
             if (!shouldRun) return
 
-            val intent = Intent(context, RealtimeUsageService::class.java)
+            val intent = Intent(app, RealtimeUsageService::class.java)
             try {
-                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
-                else context.startService(intent)
-            } catch (_: Exception) {
-                // WorkManager is the low-frequency fallback; the next foreground app resume retries.
-                runCatching { TrayScheduler.ensure(context) }
+                if (Build.VERSION.SDK_INT >= 26) app.startForegroundService(intent)
+                else app.startService(intent)
+            } catch (e: Exception) {
+                RuntimeHealth.markError(app, "service_start:${e.javaClass.simpleName}")
+                runCatching { TrayScheduler.ensure(app) }
             }
         }
 
         fun stop(context: Context) {
-            val config = TrayStore.loadConfig(context)
-            if (config.persistentNotificationEnabled || hasWebCredential(config)) start(context)
-            else context.stopService(Intent(context, RealtimeUsageService::class.java))
+            val app = context.applicationContext
+            val config = TrayStore.loadConfig(app)
+            val shouldRun = config.persistentNotificationEnabled ||
+                config.floatingEnabled ||
+                (config.realtimeEnabled && hasCredential(config)) ||
+                hasWebCredential(config)
+            if (shouldRun) start(app)
+            else app.stopService(Intent(app, RealtimeUsageService::class.java))
         }
 
         private fun hasCredential(config: TrayConfig): Boolean =
@@ -287,5 +327,106 @@ class RealtimeUsageService : Service() {
 
         private fun hasWebCredential(config: TrayConfig): Boolean =
             config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank()
+    }
+}
+
+/** Lightweight persistent diagnostics for long-running behavior. */
+object RuntimeHealth {
+    private const val PREFS = "luming_runtime_health_v1"
+    private fun prefs(context: Context) =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun markServiceStarted(context: Context) {
+        prefs(context).edit()
+            .putBoolean("service_running", true)
+            .putLong("service_started_at", System.currentTimeMillis())
+            .remove("last_error")
+            .apply()
+    }
+
+    fun markServiceStopped(context: Context) {
+        prefs(context).edit()
+            .putBoolean("service_running", false)
+            .putLong("service_stopped_at", System.currentTimeMillis())
+            .apply()
+    }
+
+    fun markServiceHeartbeat(context: Context, at: Long = System.currentTimeMillis()) {
+        prefs(context).edit().putLong("service_heartbeat_at", at).apply()
+    }
+
+    fun markWorkerStarted(context: Context, generation: Int, at: Long) {
+        prefs(context).edit()
+            .putInt("worker_generation", generation)
+            .putLong("worker_started_at", at)
+            .putLong("worker_heartbeat_at", at)
+            .apply()
+    }
+
+    fun markWorkerHeartbeat(context: Context, generation: Int, at: Long) {
+        prefs(context).edit()
+            .putInt("worker_generation", generation)
+            .putLong("worker_heartbeat_at", at)
+            .apply()
+    }
+
+    fun markUsageSuccess(context: Context) {
+        prefs(context).edit()
+            .putLong("usage_success_at", System.currentTimeMillis())
+            .remove("usage_error")
+            .apply()
+    }
+
+    fun markUsageFailure(context: Context, message: String) {
+        prefs(context).edit()
+            .putLong("usage_failure_at", System.currentTimeMillis())
+            .putString("usage_error", message.take(180))
+            .apply()
+    }
+
+    fun markModelSuccess(context: Context) {
+        prefs(context).edit()
+            .putLong("model_success_at", System.currentTimeMillis())
+            .remove("model_error")
+            .apply()
+    }
+
+    fun markModelFailure(context: Context, message: String) {
+        prefs(context).edit()
+            .putLong("model_failure_at", System.currentTimeMillis())
+            .putString("model_error", message.take(180))
+            .apply()
+    }
+
+    fun markError(context: Context, message: String) {
+        prefs(context).edit()
+            .putLong("last_error_at", System.currentTimeMillis())
+            .putString("last_error", message.take(180))
+            .apply()
+    }
+
+    fun summary(context: Context): String {
+        val p = prefs(context)
+        val running = p.getBoolean("service_running", false)
+        val workerAt = p.getLong("worker_heartbeat_at", 0L)
+        val usageAt = p.getLong("usage_success_at", 0L)
+        val modelAt = p.getLong("model_success_at", 0L)
+        val error = p.getString("last_error", "").orEmpty()
+        return buildString {
+            append(if (running) "Runtime ON" else "Runtime OFF")
+            if (workerAt > 0L) append(" · worker ${age(workerAt)}")
+            if (usageAt > 0L) append(" · usage ${age(usageAt)}")
+            if (modelAt > 0L) append(" · model ${age(modelAt)}")
+            if (error.isNotBlank()) append(" · $error")
+        }
+    }
+
+    private fun age(at: Long): String {
+        val seconds = ((System.currentTimeMillis() - at).coerceAtLeast(0L) / 1000L)
+        return when {
+            seconds < 60 -> "${seconds}s"
+            seconds < 3600 -> "${seconds / 60}m"
+            else -> "${seconds / 3600}h"
+        }
     }
 }
