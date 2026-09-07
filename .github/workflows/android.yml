@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, feature/cost-analytics-010 ]
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: android-actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
