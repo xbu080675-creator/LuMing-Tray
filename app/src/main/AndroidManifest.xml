@@ -61,9 +61,14 @@
             android:parentActivityName=".SafeMainActivity" />
 
         <activity
-            android:name=".ModelAvailabilityActivity"
+            android:name=".ModelAvailabilitySafeActivity"
             android:exported="false"
             android:parentActivityName=".SafeMainActivity" />
+
+        <activity-alias
+            android:name=".ModelAvailabilityActivity"
+            android:exported="false"
+            android:targetActivity=".ModelAvailabilitySafeActivity" />
 
         <activity
             android:name=".ApiKeyManagementActivity"
