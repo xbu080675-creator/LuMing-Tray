@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -131,10 +130,8 @@ object SecureVault {
         if (Build.VERSION.SDK_INT >= 28 && isStrongBoxAvailable(context)) {
             try {
                 return generateKey(strongBox = true)
-            } catch (_: StrongBoxUnavailableException) {
-                // Fall through to the regular Android Keystore.
             } catch (_: Exception) {
-                // Some vendors advertise StrongBox but fail during key generation.
+                // Some vendors advertise StrongBox but fail during key generation. Fall back.
             }
         }
 
