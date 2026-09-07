@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, feature/model-availability-012 ]
+    branches: [ main, feature/background-model-monitor-013 ]
   workflow_dispatch:
 
 permissions:
@@ -39,6 +39,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LuMing-Tray-0.12.0-debug
+          name: LuMing-Tray-0.13.0-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
