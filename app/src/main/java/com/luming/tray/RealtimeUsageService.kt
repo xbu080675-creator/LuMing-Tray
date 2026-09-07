@@ -6,11 +6,16 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import kotlin.math.min
 
 /**
- * Foreground service that owns LuMing's system-level ongoing notification.
- * When realtime monitoring is enabled it also performs adaptive polling; when it is disabled,
- * the service stays idle so the notification remains a true foreground-service notification.
+ * Foreground service shared by three long-lived jobs:
+ * 1) the system ongoing notification,
+ * 2) adaptive API-usage polling,
+ * 3) lightweight model-availability polling every ~60 seconds after web login.
+ *
+ * Model monitoring deliberately uses only the channel-monitor summary endpoint in background;
+ * the heavier 7/15/30-day detail calls remain foreground UI work.
  */
 class RealtimeUsageService : Service() {
     @Volatile
@@ -28,8 +33,9 @@ class RealtimeUsageService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val config = TrayStore.loadConfig(this)
-        val canRefresh = config.realtimeEnabled && hasCredential(config)
-        if (!config.persistentNotificationEnabled && !canRefresh) {
+        val canRefreshUsage = config.realtimeEnabled && hasCredential(config)
+        val canMonitorModels = hasWebCredential(config)
+        if (!config.persistentNotificationEnabled && !canRefreshUsage && !canMonitorModels) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -52,49 +58,78 @@ class RealtimeUsageService : Service() {
 
     private fun runLoop() {
         var unchangedRounds = 0
+        var nextUsageAt = 0L
+        var nextModelAt = 0L
+        var nextTrayRefreshAt = 0L
+
         while (running) {
             val config = TrayStore.loadConfig(this)
-            val canRefresh = config.realtimeEnabled && hasCredential(config)
-
-            if (!config.persistentNotificationEnabled && !canRefresh) {
+            val canRefreshUsage = config.realtimeEnabled && hasCredential(config)
+            val canMonitorModels = hasWebCredential(config)
+            if (!config.persistentNotificationEnabled && !canRefreshUsage && !canMonitorModels) {
                 stopSelf()
                 return
             }
 
-            if (!canRefresh) {
-                // Keep the FGS alive only for the persistent system tray notification.
-                TrayNotification.show(this, TrayStore.loadStats(this))
-                try {
-                    Thread.sleep(IDLE_NOTIFICATION_REFRESH_MS)
-                } catch (_: InterruptedException) {
-                    return
+            var now = System.currentTimeMillis()
+
+            if (canRefreshUsage) {
+                if (nextUsageAt == Long.MAX_VALUE) nextUsageAt = now
+                if (now >= nextUsageAt) {
+                    val before = TrayStore.loadStats(this)
+                    val result = UsageClient.refreshBlocking(this)
+                    val after = result.stats
+                    val changed = materiallyChanged(before, after)
+                    unchangedRounds = if (changed) 0 else unchangedRounds + 1
+                    if (result.success && after != null) TrayNotification.show(this, after)
+
+                    val interactive = getSystemService(PowerManager::class.java).isInteractive
+                    nextUsageAt = System.currentTimeMillis() +
+                        nextUsageDelayMs(interactive, unchangedRounds, result.success)
                 }
-                continue
+            } else {
+                nextUsageAt = Long.MAX_VALUE
+                unchangedRounds = 0
             }
 
-            val before = TrayStore.loadStats(this)
-            val result = UsageClient.refreshBlocking(this)
-            val after = result.stats
-            val changed = materiallyChanged(before, after)
-            unchangedRounds = if (changed) 0 else unchangedRounds + 1
-
-            if (result.success && after != null) {
-                TrayNotification.show(this, after)
+            now = System.currentTimeMillis()
+            if (canMonitorModels) {
+                if (nextModelAt == Long.MAX_VALUE || nextModelAt == 0L) {
+                    val lastAttempt = ModelAvailabilityMonitor.lastAttemptAt(this)
+                    nextModelAt = maxOf(now, lastAttempt + MODEL_MONITOR_INTERVAL_MS)
+                }
+                if (now >= nextModelAt) {
+                    ModelAvailabilityClient.loadSummaryBlocking(this)
+                    nextModelAt = System.currentTimeMillis() + MODEL_MONITOR_INTERVAL_MS
+                }
+            } else {
+                nextModelAt = Long.MAX_VALUE
             }
 
-            val interactive = getSystemService(PowerManager::class.java).isInteractive
-            val delay = nextDelayMs(interactive, unchangedRounds, result.success)
+            now = System.currentTimeMillis()
+            if (nextTrayRefreshAt == 0L || now >= nextTrayRefreshAt) {
+                TrayNotification.show(this, TrayStore.loadStats(this))
+                nextTrayRefreshAt = now + IDLE_NOTIFICATION_REFRESH_MS
+            }
+
+            val wakeAt = minOfFinite(
+                nextUsageAt,
+                nextModelAt,
+                nextTrayRefreshAt,
+                now + MAX_SLEEP_MS
+            )
+            val sleepMs = (wakeAt - System.currentTimeMillis())
+                .coerceIn(MIN_SLEEP_MS, MAX_SLEEP_MS)
             try {
-                Thread.sleep(delay)
+                Thread.sleep(sleepMs)
             } catch (_: InterruptedException) {
                 return
             }
         }
     }
 
-    private fun nextDelayMs(interactive: Boolean, unchangedRounds: Int, success: Boolean): Long {
+    private fun nextUsageDelayMs(interactive: Boolean, unchangedRounds: Int, success: Boolean): Long {
         if (!success) return if (interactive) 30_000L else 120_000L
-
         return if (interactive) {
             when {
                 unchangedRounds < 12 -> 10_000L
@@ -123,13 +158,25 @@ class RealtimeUsageService : Service() {
             a.avgResponseSeconds != b.avgResponseSeconds
     }
 
+    private fun minOfFinite(vararg values: Long): Long {
+        var result = Long.MAX_VALUE
+        for (value in values) {
+            if (value < result) result = value
+        }
+        return result
+    }
+
     companion object {
+        private const val MODEL_MONITOR_INTERVAL_MS = 60_000L
         private const val IDLE_NOTIFICATION_REFRESH_MS = 5L * 60L * 1000L
+        private const val MIN_SLEEP_MS = 1_000L
+        private const val MAX_SLEEP_MS = 60_000L
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
             val shouldRun = config.persistentNotificationEnabled ||
-                (config.realtimeEnabled && hasCredential(config))
+                (config.realtimeEnabled && hasCredential(config)) ||
+                hasWebCredential(config)
             if (!shouldRun) return
 
             val intent = Intent(context, RealtimeUsageService::class.java)
@@ -140,15 +187,15 @@ class RealtimeUsageService : Service() {
                     context.startService(intent)
                 }
             } catch (_: Exception) {
-                // WorkManager remains as the low-frequency fallback if the ROM blocks FGS startup.
+                // WorkManager remains the low-frequency usage fallback. Android does not allow
+                // one-minute periodic WorkManager jobs, so model monitoring resumes with the FGS.
                 TrayScheduler.ensure(context)
             }
         }
 
         fun stop(context: Context) {
-            // Realtime monitoring can be turned off without tearing down the permanent tray.
             val config = TrayStore.loadConfig(context)
-            if (config.persistentNotificationEnabled) {
+            if (config.persistentNotificationEnabled || hasWebCredential(config)) {
                 start(context)
             } else {
                 context.stopService(Intent(context, RealtimeUsageService::class.java))
@@ -161,5 +208,8 @@ class RealtimeUsageService : Service() {
                 config.consoleCookie.isNotBlank() ||
                 config.accessToken.isNotBlank() ||
                 config.apiKey.isNotBlank()
+
+        private fun hasWebCredential(config: TrayConfig): Boolean =
+            config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank()
     }
 }
