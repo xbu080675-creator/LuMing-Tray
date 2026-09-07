@@ -4,9 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
-import android.os.Build
 import android.view.View
-import android.view.WindowInsetsController
 
 enum class LuMingThemeMode(val wire: String) {
     SYSTEM("system"), LIGHT("light"), DARK("dark");
@@ -19,10 +17,9 @@ enum class LuMingThemeMode(val wire: String) {
 /**
  * Lightweight theme preference + palette.
  *
- * 0.16.0 used an Application lifecycle callback that recursively recolored every View whenever
- * an Activity resumed. That was too invasive for a growing app and could touch arbitrary widget
- * drawables. 0.17.0 removes that global hook completely. Each native screen asks this palette for
- * colors explicitly, so opening the app never depends on a whole-view-tree mutation pass.
+ * System-bar styling intentionally uses the conservative decorView flags on every supported API
+ * level. The WindowInsetsController appearance path caused OEM-specific crashes on the settings
+ * screen, so it is deliberately avoided here.
  */
 object LuMingTheme {
     private const val PREFS = "luming_ui"
@@ -50,17 +47,12 @@ object LuMingTheme {
     fun applySystemBars(activity: Activity) {
         val dark = isDark(activity)
         val bg = bg(activity)
-        activity.window.statusBarColor = bg
-        activity.window.navigationBarColor = bg
-        if (Build.VERSION.SDK_INT >= 30) {
-            activity.window.insetsController?.setSystemBarsAppearance(
-                if (dark) 0 else WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            activity.window.decorView.systemUiVisibility = if (dark) 0
-            else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        runCatching { activity.window.statusBarColor = bg }
+        runCatching { activity.window.navigationBarColor = bg }
+        @Suppress("DEPRECATION")
+        runCatching {
+            activity.window.decorView.systemUiVisibility = if (dark) 0 else
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
     }
 
