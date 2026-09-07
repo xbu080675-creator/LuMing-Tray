@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/cost-analytics-010 ]
   workflow_dispatch:
 
 permissions:
