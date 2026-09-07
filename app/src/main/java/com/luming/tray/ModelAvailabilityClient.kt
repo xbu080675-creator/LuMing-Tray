@@ -74,11 +74,7 @@ private data class RefreshedMonitorAuth(
     val expiresAt: Long
 )
 
-/**
- * Reads the same authenticated Sub2API endpoints used by the web dashboard.
- * Full UI refresh uses channel catalog + monitor detail; background refresh intentionally calls
- * only /channel-monitors once per cycle so 60-second monitoring stays lightweight.
- */
+/** Reads the same authenticated Sub2API endpoints used by the web dashboard. */
 object ModelAvailabilityClient {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val client = OkHttpClient.Builder()
@@ -99,7 +95,10 @@ object ModelAvailabilityClient {
         val config = TrayStore.loadConfig(context)
         val root = siteRoot(config.baseUrl)
         var token = resolveWebToken(context, forceRefresh = false)
-        if (token.isNullOrBlank()) return notLoggedIn()
+        if (token.isNullOrBlank()) {
+            ModelAvailabilityMonitor.markFailure(context, "网页登录授权不可用")
+            return notLoggedIn()
+        }
 
         var channelsValue = requestValue("$root/api/v1/channels/available", token)
         var monitorsValue = requestValue("$root/api/v1/channel-monitors", token)
@@ -110,6 +109,10 @@ object ModelAvailabilityClient {
                 channelsValue = requestValue("$root/api/v1/channels/available", token)
                 monitorsValue = requestValue("$root/api/v1/channel-monitors", token)
             }
+        }
+
+        if (channelsValue == null && monitorsValue == null) {
+            ModelAvailabilityMonitor.markFailure(context, "模型状态接口请求失败")
         }
 
         val channels = channelsValue?.let(::parseChannels).orEmpty()
@@ -127,13 +130,16 @@ object ModelAvailabilityClient {
         )
     }
 
-    /** One-request path used by the foreground service every ~60 seconds. */
+    /** One-request path used by the foreground runtime every ~60 seconds. */
     fun loadSummaryBlocking(context: Context): ModelAvailabilityReport {
         ModelAvailabilityMonitor.markAttempt(context)
         val config = TrayStore.loadConfig(context)
         val root = siteRoot(config.baseUrl)
         var token = resolveWebToken(context, forceRefresh = false)
-        if (token.isNullOrBlank()) return notLoggedIn()
+        if (token.isNullOrBlank()) {
+            ModelAvailabilityMonitor.markFailure(context, "网页登录授权不可用")
+            return notLoggedIn()
+        }
 
         var value = requestValue("$root/api/v1/channel-monitors", token)
         if (value == null) {
@@ -144,6 +150,9 @@ object ModelAvailabilityClient {
             }
         }
 
+        if (value == null) {
+            ModelAvailabilityMonitor.markFailure(context, "模型可用性后台请求失败")
+        }
         val monitors = value?.let(::parseMonitorList).orEmpty()
         if (monitors.isNotEmpty()) ModelAvailabilityMonitor.process(context, monitors)
         return ModelAvailabilityReport(
@@ -166,23 +175,35 @@ object ModelAvailabilityClient {
         return if (parts.isEmpty()) "站点没有返回可用渠道或可用性监控数据" else parts.joinToString(" · ")
     }
 
+    /**
+     * Resolve a usable access token. A refresh token alone is enough to recover the session; the
+     * previous implementation returned immediately when accessToken was blank, leaving the service
+     * alive but permanently unable to poll.
+     */
     private fun resolveWebToken(context: Context, forceRefresh: Boolean): String? {
         var config = TrayStore.loadConfig(context)
         val current = config.webAuthToken.trim()
-        if (current.isBlank()) return null
+        val refreshToken = config.webRefreshToken.trim()
+        if (current.isBlank() && refreshToken.isBlank()) return null
+
         val expiringSoon = config.webTokenExpiresAt > 0L &&
             config.webTokenExpiresAt <= System.currentTimeMillis() + 60_000L
-        if (!forceRefresh && !expiringSoon) return current
-        val refreshToken = config.webRefreshToken.trim()
-        if (refreshToken.isBlank()) return current
+        if (!forceRefresh && current.isNotBlank() && !expiringSoon) return current
+        if (refreshToken.isBlank()) return current.takeIf { it.isNotBlank() }
 
-        val refreshed = refreshWebToken(siteRoot(config.baseUrl), refreshToken) ?: return current
+        val refreshed = refreshWebToken(siteRoot(config.baseUrl), refreshToken)
+            ?: return current.takeIf { it.isNotBlank() }
         config = config.copy(
             webAuthToken = refreshed.accessToken,
             webRefreshToken = refreshed.refreshToken,
             webTokenExpiresAt = refreshed.expiresAt
         )
-        TrayStore.saveConfig(context, config)
+        val persisted = TrayStore.saveConfig(context, config)
+        if (!persisted) {
+            // The fresh token is still valid for this request; persistence health is exposed by
+            // TrayStore/SecureVault so the next foreground visit can ask for re-auth if required.
+            TrayStore.saveLastMessage(context, "令牌已续期，但安全存储写入失败")
+        }
         return refreshed.accessToken
     }
 
@@ -267,8 +288,13 @@ object ModelAvailabilityClient {
     }
 
     private fun parseMonitorList(value: Any): List<ModelMonitor> {
-        val root = value as? JSONObject ?: return emptyList()
-        val items = root.optJSONArray("items") ?: return emptyList()
+        val items = when (value) {
+            is JSONArray -> value
+            is JSONObject -> value.optJSONArray("items")
+                ?: value.optJSONArray("monitors")
+                ?: return emptyList()
+            else -> return emptyList()
+        }
         val out = mutableListOf<ModelMonitor>()
         for (i in 0 until items.length()) {
             val item = items.optJSONObject(i) ?: continue
@@ -354,8 +380,8 @@ object ModelAvailabilityClient {
     private fun siteRoot(baseUrl: String): String {
         val clean = baseUrl.trim().trimEnd('/')
         return when {
-            clean.endsWith("/v1") -> clean.removeSuffix("/v1")
             clean.endsWith("/api/v1") -> clean.removeSuffix("/api/v1")
+            clean.endsWith("/v1") -> clean.removeSuffix("/v1")
             else -> clean
         }
     }
