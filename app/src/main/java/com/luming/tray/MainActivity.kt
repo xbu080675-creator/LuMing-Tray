@@ -26,7 +26,15 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
-    private lateinit var statusText: TextView
+    private lateinit var balanceValueText: TextView
+    private lateinit var todayCostValueText: TextView
+    private lateinit var requestsValueText: TextView
+    private lateinit var tokenValueText: TextView
+    private lateinit var responseValueText: TextView
+    private lateinit var ioValueText: TextView
+    private lateinit var perfValueText: TextView
+    private lateinit var updateValueText: TextView
+
     private lateinit var diagnosticText: TextView
     private lateinit var loginStateText: TextView
     private lateinit var baseUrlField: EditText
@@ -37,11 +45,17 @@ class MainActivity : Activity() {
     private lateinit var realtimeButton: Button
     private lateinit var floatingButton: Button
     private lateinit var balanceAlertButton: Button
+
     private var autoRefreshInFlight = false
     private var waitingOverlayPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = bgColor()
+        window.navigationBarColor = bgColor()
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+
         setContentView(buildUi())
         loadConfigIntoFields()
         requestNotificationPermissionIfNeeded()
@@ -67,11 +81,14 @@ class MainActivity : Activity() {
 
     private fun buildUi(): View {
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(Color.rgb(244, 250, 250))
+            setBackgroundColor(bgColor())
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFillViewport = false
         }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(32))
+            setPadding(dp(18), dp(20), dp(18), dp(34))
             setOnApplyWindowInsetsListener { view, insets ->
                 val top = if (Build.VERSION.SDK_INT >= 30) {
                     insets.getInsets(WindowInsets.Type.statusBars()).top
@@ -85,151 +102,269 @@ class MainActivity : Activity() {
                     @Suppress("DEPRECATION")
                     insets.systemWindowInsetBottom
                 }
-                view.setPadding(dp(20), dp(20) + top, dp(20), dp(24) + bottom)
+                view.setPadding(dp(18), dp(16) + top, dp(18), dp(24) + bottom)
                 insets
             }
         }
 
-        root.addView(TextView(this).apply {
-            text = "LuMing Tray"
-            textSize = 28f
-            setTextColor(Color.rgb(30, 38, 50))
-            setTypeface(typeface, Typeface.BOLD)
-        })
-        root.addView(TextView(this).apply {
-            text = "手机通知栏与悬浮窗里的 API 用量托盘"
+        // Header
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), 0, dp(2), dp(10))
+        }
+        header.addView(TextView(this).apply {
+            text = "LM"
             textSize = 15f
-            setTextColor(Color.rgb(100, 110, 122))
-            setPadding(0, dp(6), 0, dp(22))
-        })
-
-        statusText = TextView(this).apply {
-            textSize = 16f
-            setTextColor(Color.rgb(41, 48, 61))
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-            background = roundedCard()
-        }
-        root.addView(statusText, matchWrap())
-
-        realtimeButton = Button(this).apply {
-            isAllCaps = false
-            setOnClickListener { toggleRealtime() }
-        }
-        root.addView(realtimeButton, matchHeight(50).apply { topMargin = dp(12) })
-
-        floatingButton = Button(this).apply {
-            isAllCaps = false
-            setOnClickListener { toggleFloating() }
-        }
-        root.addView(floatingButton, matchHeight(50).apply { topMargin = dp(8) })
-
-        root.addView(Button(this).apply {
-            text = "充值"
-            isAllCaps = false
-            setOnClickListener {
-                val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
-                if (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) {
-                    saveFields(baseUrl)
-                }
-                startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(accentColor())
+                cornerRadius = dp(16).toFloat()
             }
-        }, matchHeight(50).apply { topMargin = dp(8) })
+            elevation = dp(5).toFloat()
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+
+        val titleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+        }
+        titleBox.addView(TextView(this).apply {
+            text = "LuMing Tray"
+            textSize = 25f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+        })
+        titleBox.addView(TextView(this).apply {
+            text = "API USAGE DASHBOARD"
+            textSize = 10.5f
+            letterSpacing = 0.12f
+            setTextColor(textMuted())
+        })
+        header.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        header.addView(TextView(this).apply {
+            text = "安全存储"
+            textSize = 10.5f
+            gravity = Gravity.CENTER
+            setTextColor(accentDark())
+            background = pillBackground(Color.rgb(223, 242, 237))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        })
+        root.addView(header)
+
+        // Main balance hero card
+        val hero = softPanel().apply {
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+        }
+        val heroTop = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        heroTop.addView(TextView(this).apply {
+            text = "账户余额"
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textMuted())
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        loginStateText = TextView(this).apply {
+            textSize = 10.5f
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+        }
+        heroTop.addView(loginStateText)
+        hero.addView(heroTop)
+
+        balanceValueText = TextView(this).apply {
+            text = "--"
+            textSize = 38f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(accentColor())
+            setPadding(0, dp(8), 0, dp(2))
+        }
+        hero.addView(balanceValueText)
+
+        updateValueText = TextView(this).apply {
+            text = "等待首次读取"
+            textSize = 11.5f
+            setTextColor(textMuted())
+        }
+        hero.addView(updateValueText)
+        root.addView(hero, matchWrap().apply { topMargin = dp(4) })
+
+        root.addView(sectionTitle("今日概览"))
+
+        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val costCard = metricCard("今日消费", "USD")
+        todayCostValueText = costCard.second
+        row1.addView(costCard.first, weightedCardParams(endMargin = 6))
+        val reqCard = metricCard("请求次数", "REQUESTS")
+        requestsValueText = reqCard.second
+        row1.addView(reqCard.first, weightedCardParams(startMargin = 6))
+        root.addView(row1, matchWrap())
+
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tokenCard = metricCard("今日 Token", "TOKENS")
+        tokenValueText = tokenCard.second
+        row2.addView(tokenCard.first, weightedCardParams(endMargin = 6))
+        val responseCard = metricCard("平均响应", "LATENCY")
+        responseValueText = responseCard.second
+        row2.addView(responseCard.first, weightedCardParams(startMargin = 6))
+        root.addView(row2, matchWrap().apply { topMargin = dp(12) })
+
+        val perfPanel = softPanel().apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val ioBox = smallMetricBox("输入 / 输出")
+        ioValueText = ioBox.second
+        perfPanel.addView(ioBox.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val separator = View(this).apply { setBackgroundColor(Color.rgb(215, 224, 228)) }
+        perfPanel.addView(separator, LinearLayout.LayoutParams(dp(1), dp(42)).apply {
+            leftMargin = dp(12)
+            rightMargin = dp(12)
+        })
+        val rpmBox = smallMetricBox("RPM / TPM")
+        perfValueText = rpmBox.second
+        perfPanel.addView(rpmBox.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(perfPanel, matchWrap().apply { topMargin = dp(12) })
+
+        root.addView(sectionTitle("快捷控制"))
+
+        val actionRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        realtimeButton = actionButton("近实时监控") { toggleRealtime() }
+        actionRow1.addView(realtimeButton, weightedActionParams(endMargin = 6))
+        floatingButton = actionButton("悬浮窗") { toggleFloating() }
+        actionRow1.addView(floatingButton, weightedActionParams(startMargin = 6))
+        root.addView(actionRow1)
+
+        val actionRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val rechargeButton = actionButton("立即充值") {
+            val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
+            if (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) {
+                saveFields(baseUrl)
+            }
+            startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
+        }
+        actionRow2.addView(rechargeButton, weightedActionParams(endMargin = 6))
+        refreshButton = actionButton("刷新数据") { saveAndRefresh() }
+        actionRow2.addView(refreshButton, weightedActionParams(startMargin = 6))
+        root.addView(actionRow2, matchWrap().apply { topMargin = dp(10) })
 
         root.addView(TextView(this).apply {
-            text = "悬浮窗不会额外请求 API，只显示近实时服务已经保存的数据。拖动标题移动位置，拖动右下角 ↘ 可自由缩放，位置和大小会自动记住。"
-            textSize = 12.5f
-            setTextColor(Color.rgb(86, 96, 110))
-            setPadding(dp(4), dp(10), dp(4), 0)
+            text = "悬浮窗：拖顶部移动，四边与四角都可缩放，位置与大小自动记住。"
+            textSize = 11.5f
+            setTextColor(textMuted())
+            setPadding(dp(4), dp(9), dp(4), 0)
         })
 
         root.addView(sectionTitle("余额预警"))
+        val alertPanel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
 
-        balanceAlertButton = Button(this).apply {
-            isAllCaps = false
-            setOnClickListener { toggleBalanceAlert() }
+        val alertHead = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        root.addView(balanceAlertButton, matchHeight(48))
+        val alertTitleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        alertTitleBox.addView(TextView(this).apply {
+            text = "低余额保护"
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+        })
+        alertTitleBox.addView(TextView(this).apply {
+            text = "跌破阈值提醒，余额 ≤ 0 自动升级"
+            textSize = 10.8f
+            setTextColor(textMuted())
+            setPadding(0, dp(3), 0, 0)
+        })
+        alertHead.addView(alertTitleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        balanceAlertButton = actionButton("预警") { toggleBalanceAlert() }.apply {
+            textSize = 11.5f
+            minWidth = dp(96)
+        }
+        alertHead.addView(balanceAlertButton, LinearLayout.LayoutParams(dp(104), dp(44)))
+        alertPanel.addView(alertHead)
 
         balanceAlertThresholdField = editField("预警阈值，例如 0.50").apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
-        root.addView(balanceAlertThresholdField, matchHeight(54).apply { topMargin = dp(8) })
+        alertPanel.addView(balanceAlertThresholdField, matchHeight(52).apply { topMargin = dp(14) })
+        root.addView(alertPanel, matchWrap())
 
-        root.addView(TextView(this).apply {
-            text = "余额首次跌破阈值时提醒一次；继续低于阈值不会反复轰炸。充值回阈值以上后自动复位；余额 ≤ 0 会升级为“余额不足”提醒。"
-            textSize = 12.5f
-            setTextColor(Color.rgb(86, 96, 110))
-            setPadding(dp(4), dp(8), dp(4), 0)
+        root.addView(sectionTitle("连接与授权"))
+        val connectionPanel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
+
+        connectionPanel.addView(TextView(this).apply {
+            text = "站点"
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textMuted())
+            setPadding(dp(2), 0, 0, dp(6))
         })
-
-        root.addView(sectionTitle("连接设置"))
-
         baseUrlField = editField("API 基地址，例如 https://lmyanyu.com/v1")
-        root.addView(baseUrlField, matchHeight(54))
+        connectionPanel.addView(baseUrlField, matchHeight(52))
 
-        apiKeyField = secretField("API Key（sk-...，可选）")
-        root.addView(apiKeyField, matchHeight(54).apply { topMargin = dp(10) })
+        connectionPanel.addView(TextView(this).apply {
+            text = "API Key（兼容项）"
+            textSize = 11f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textMuted())
+            setPadding(dp(2), dp(14), 0, dp(6))
+        })
+        apiKeyField = secretField("API Key，可选")
+        connectionPanel.addView(apiKeyField, matchHeight(52))
 
-        root.addView(Button(this).apply {
-            text = "网页登录并授权统计"
-            isAllCaps = false
-            setOnClickListener {
-                val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
-                if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
-                    diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
-                    return@setOnClickListener
-                }
-                saveFields(baseUrl)
-                startActivity(Intent(this@MainActivity, LoginActivity::class.java))
+        connectionPanel.addView(actionButton("网页登录并授权统计") {
+            val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
+            if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
+                diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
+                return@actionButton
             }
-        }, matchHeight(52).apply { topMargin = dp(12) })
+            saveFields(baseUrl)
+            startActivity(Intent(this@MainActivity, LoginActivity::class.java))
+        }, matchHeight(50).apply { topMargin = dp(14) })
 
-        loginStateText = TextView(this).apply {
-            textSize = 12.5f
-            setTextColor(Color.rgb(86, 96, 110))
-            setPadding(dp(4), dp(8), dp(4), 0)
-        }
-        root.addView(loginStateText)
+        connectionPanel.addView(TextView(this).apply {
+            text = "凭据落盘：${SecureVault.securityLabel(this@MainActivity)}"
+            textSize = 10.5f
+            setTextColor(accentDark())
+            setPadding(dp(3), dp(10), dp(3), 0)
+        })
+        root.addView(connectionPanel, matchWrap())
 
         root.addView(sectionTitle("高级选项"))
-
+        val advancedPanel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
         accessTokenField = secretField("控制台 Access Token（可选）")
-        root.addView(accessTokenField, matchHeight(54))
-
-        root.addView(TextView(this).apply {
-            text = "推荐直接使用“网页登录并授权统计”。登录成功后会自动保存站点令牌；近实时服务和后台定时任务都会复用该令牌。API Key 和手动 Access Token 继续作为兼容兜底。所有凭据只保存在本机应用私有数据中，不写入 GitHub。"
-            textSize = 12.5f
-            setTextColor(Color.rgb(112, 120, 132))
-            setPadding(dp(4), dp(10), dp(4), 0)
+        advancedPanel.addView(accessTokenField, matchHeight(52))
+        advancedPanel.addView(TextView(this).apply {
+            text = "推荐优先使用网页登录授权。API Key、Access Token、Cookie 与网页登录 Token 均进入本机加密仓库，不写入普通配置。"
+            textSize = 10.8f
+            setTextColor(textMuted())
+            setPadding(dp(2), dp(10), dp(2), 0)
         })
+        root.addView(advancedPanel, matchWrap())
 
-        refreshButton = Button(this).apply {
-            text = "保存并立即读取"
-            isAllCaps = false
-            setOnClickListener { saveAndRefresh() }
-        }
-        root.addView(refreshButton, matchHeight(52).apply { topMargin = dp(18) })
-
-        root.addView(Button(this).apply {
-            text = "手动读取（备用）"
-            isAllCaps = false
-            setOnClickListener { refreshNow(manual = true) }
-        }, matchHeight(48).apply { topMargin = dp(8) })
-
+        root.addView(sectionTitle("系统状态"))
         diagnosticText = TextView(this).apply {
-            textSize = 13f
-            setTextColor(Color.rgb(86, 96, 110))
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedCard()
+            textSize = 12.5f
+            setTextColor(textSecondary())
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            background = panelBackground()
+            elevation = dp(3).toFloat()
         }
-        root.addView(diagnosticText, matchWrap().apply { topMargin = dp(16) })
+        root.addView(diagnosticText, matchWrap())
 
         root.addView(TextView(this).apply {
-            text = "M0.7 · 可缩放悬浮窗 / 余额预警 / 近实时监控 / 一键充值"
-            textSize = 12.5f
-            setTextColor(Color.rgb(112, 120, 132))
+            text = "LuMing Tray 0.9.0 · Soft Dashboard"
+            textSize = 10.5f
+            setTextColor(textMuted())
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(8), dp(18), dp(8), 0)
+            setPadding(dp(8), dp(22), dp(8), 0)
         })
 
         scroll.addView(root)
@@ -241,9 +376,7 @@ class MainActivity : Activity() {
         baseUrlField.setText(config.baseUrl)
         apiKeyField.setText(config.apiKey)
         accessTokenField.setText(config.accessToken)
-        balanceAlertThresholdField.setText(
-            String.format(Locale.US, "%.2f", config.balanceAlertThreshold)
-        )
+        balanceAlertThresholdField.setText(String.format(Locale.US, "%.2f", config.balanceAlertThreshold))
     }
 
     private fun saveFields(baseUrl: String = baseUrlField.text.toString().trim().trimEnd('/')) {
@@ -285,11 +418,7 @@ class MainActivity : Activity() {
         val old = TrayStore.loadConfig(this)
         val next = !old.realtimeEnabled
         TrayStore.saveConfig(this, old.copy(realtimeEnabled = next))
-        if (next) {
-            RealtimeUsageService.start(this)
-        } else {
-            RealtimeUsageService.stop(this)
-        }
+        if (next) RealtimeUsageService.start(this) else RealtimeUsageService.stop(this)
         renderState(if (next) "近实时监控已开启" else "近实时监控已关闭；仍保留低频后台更新")
     }
 
@@ -306,12 +435,7 @@ class MainActivity : Activity() {
         if (!Settings.canDrawOverlays(this)) {
             waitingOverlayPermission = true
             diagnosticText.text = "请允许 LuMing Tray 显示在其他应用上层，返回后会自动开启悬浮窗。"
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
 
@@ -336,11 +460,7 @@ class MainActivity : Activity() {
 
     private fun syncRealtimeService() {
         val config = TrayStore.loadConfig(this)
-        if (config.realtimeEnabled) {
-            RealtimeUsageService.start(this)
-        } else {
-            RealtimeUsageService.stop(this)
-        }
+        if (config.realtimeEnabled) RealtimeUsageService.start(this) else RealtimeUsageService.stop(this)
     }
 
     private fun syncFloatingService() {
@@ -388,58 +508,67 @@ class MainActivity : Activity() {
 
     private fun renderState(message: String? = null) {
         val config = TrayStore.loadConfig(this)
-        realtimeButton.text = if (config.realtimeEnabled) {
-            "近实时监控：已开启"
-        } else {
-            "近实时监控：已关闭"
-        }
 
-        floatingButton.text = when {
-            config.floatingEnabled && Settings.canDrawOverlays(this) -> "悬浮窗：已开启"
-            config.floatingEnabled -> "悬浮窗：等待系统授权"
-            else -> "悬浮窗：已关闭"
-        }
+        styleStateButton(realtimeButton, config.realtimeEnabled, if (config.realtimeEnabled) "近实时 · ON" else "近实时 · OFF")
+        val floatingReady = config.floatingEnabled && Settings.canDrawOverlays(this)
+        styleStateButton(
+            floatingButton,
+            floatingReady,
+            when {
+                floatingReady -> "悬浮窗 · ON"
+                config.floatingEnabled -> "悬浮窗 · 授权中"
+                else -> "悬浮窗 · OFF"
+            }
+        )
+        styleStateButton(balanceAlertButton, config.balanceAlertEnabled, if (config.balanceAlertEnabled) "预警 · ON" else "预警 · OFF")
 
-        balanceAlertButton.text = if (config.balanceAlertEnabled) {
-            "余额预警：已开启"
-        } else {
-            "余额预警：已关闭"
-        }
-
+        val loginOk = config.webAuthToken.isNotBlank() || config.consoleCookie.isNotBlank()
         loginStateText.text = when {
-            config.webAuthToken.isNotBlank() -> "网页登录：已授权（可自动续期）"
-            config.consoleCookie.isNotBlank() -> "网页登录：已保存 Cookie（兼容模式）"
-            else -> "网页登录：未授权"
+            config.webAuthToken.isNotBlank() -> "已授权"
+            config.consoleCookie.isNotBlank() -> "兼容登录"
+            else -> "未授权"
         }
+        loginStateText.setTextColor(if (loginOk) accentDark() else textMuted())
+        loginStateText.background = pillBackground(
+            if (loginOk) Color.rgb(222, 243, 237) else Color.rgb(232, 237, 240)
+        )
 
         val stats = TrayStore.loadStats(this)
-        statusText.text = if (stats == null) {
-            "托盘状态：已就绪\n\n" +
-                "余额            --\n" +
-                "今日消费        --\n" +
-                "今日请求        --\n" +
-                "今日 Token      --\n" +
-                "输入 / 输出     -- / --\n" +
-                "RPM / TPM       -- / --\n" +
-                "平均响应        --"
+        if (stats == null) {
+            balanceValueText.text = "--"
+            balanceValueText.setTextColor(textPrimary())
+            todayCostValueText.text = "--"
+            requestsValueText.text = "--"
+            tokenValueText.text = "--"
+            responseValueText.text = "--"
+            ioValueText.text = "-- / --"
+            perfValueText.text = "-- / --"
+            updateValueText.text = "等待首次真实数据读取"
         } else {
-            buildString {
-                append("余额            ${stats.balance?.let(TrayNotification::money) ?: "--"}")
-                append("\n今日消费        ${stats.todayCost?.let(TrayNotification::money) ?: "--"}")
-                append("\n今日请求        ${stats.requests ?: "--"}")
-                append("\n今日 Token      ${stats.totalTokens?.let(TrayNotification::tokens) ?: "--"}")
-                append("\n输入 / 输出     ${stats.inputTokens?.let(TrayNotification::tokens) ?: "--"} / ${stats.outputTokens?.let(TrayNotification::tokens) ?: "--"}")
-                append("\nRPM / TPM       ${stats.rpm?.let(TrayNotification::rate) ?: "--"} / ${stats.tpm?.let(TrayNotification::rate) ?: "--"}")
-                append("\n平均响应        ${stats.avgResponseSeconds?.let(TrayNotification::seconds) ?: "--"}")
-                append("\n\n最后更新        ${formatTime(stats.updatedAt)}")
-            }
+            val balance = stats.balance
+            balanceValueText.text = balance?.let(TrayNotification::money) ?: "--"
+            balanceValueText.setTextColor(
+                when {
+                    balance == null -> textPrimary()
+                    balance <= 0.0 -> Color.rgb(205, 63, 76)
+                    balance <= config.balanceAlertThreshold -> Color.rgb(210, 129, 35)
+                    else -> accentColor()
+                }
+            )
+            todayCostValueText.text = stats.todayCost?.let(TrayNotification::money) ?: "--"
+            requestsValueText.text = stats.requests?.toString() ?: "--"
+            tokenValueText.text = stats.totalTokens?.let(TrayNotification::tokens) ?: "--"
+            responseValueText.text = stats.avgResponseSeconds?.let(TrayNotification::seconds) ?: "--"
+            ioValueText.text = "${stats.inputTokens?.let(TrayNotification::tokens) ?: "--"} / ${stats.outputTokens?.let(TrayNotification::tokens) ?: "--"}"
+            perfValueText.text = "${stats.rpm?.let(TrayNotification::rate) ?: "--"} / ${stats.tpm?.let(TrayNotification::rate) ?: "--"}"
+            updateValueText.text = "最后更新 ${formatTime(stats.updatedAt)}"
         }
 
         val last = message ?: TrayStore.loadLastMessage(this)
         diagnosticText.text = if (last.isBlank()) {
-            "等待首次真实数据读取。"
+            "系统已就绪 · 等待首次真实数据读取"
         } else {
-            "接口状态：$last"
+            "接口状态 · $last"
         }
     }
 
@@ -459,23 +588,96 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_NOTIFICATION &&
-            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (requestCode == REQ_NOTIFICATION && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             TrayNotification.show(this)
             syncRealtimeService()
             TrayStore.loadStats(this)?.let { BalanceAlert.evaluate(this, it) }
         }
     }
 
+    private fun metricCard(label: String, microLabel: String): Pair<LinearLayout, TextView> {
+        val card = softPanel().apply {
+            setPadding(dp(15), dp(14), dp(15), dp(14))
+            minimumHeight = dp(112)
+        }
+        card.addView(TextView(this).apply {
+            text = microLabel
+            textSize = 8.5f
+            letterSpacing = 0.1f
+            setTextColor(textMuted())
+        })
+        val value = TextView(this).apply {
+            text = "--"
+            textSize = 23f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        card.addView(value)
+        card.addView(TextView(this).apply {
+            text = label
+            textSize = 11.5f
+            setTextColor(textSecondary())
+        })
+        return card to value
+    }
+
+    private fun smallMetricBox(label: String): Pair<LinearLayout, TextView> {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(TextView(this).apply {
+            text = label
+            textSize = 9.8f
+            setTextColor(textMuted())
+        })
+        val value = TextView(this).apply {
+            text = "--"
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(textPrimary())
+            setPadding(0, dp(5), 0, 0)
+        }
+        box.addView(value)
+        return box to value
+    }
+
+    private fun softPanel(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = panelBackground()
+        elevation = dp(7).toFloat()
+        clipToOutline = false
+    }
+
+    private fun actionButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = label
+        isAllCaps = false
+        textSize = 12.5f
+        setTypeface(typeface, Typeface.BOLD)
+        setTextColor(textSecondary())
+        background = buttonBackground(false)
+        elevation = dp(4).toFloat()
+        stateListAnimator = null
+        minHeight = 0
+        minimumHeight = 0
+        setPadding(dp(10), 0, dp(10), 0)
+        setOnClickListener { onClick() }
+    }
+
+    private fun styleStateButton(button: Button, active: Boolean, label: String) {
+        button.text = label
+        button.setTextColor(if (active) accentDark() else textSecondary())
+        button.background = buttonBackground(active)
+        button.alpha = 1f
+    }
+
     private fun editField(hintText: String): EditText = EditText(this).apply {
         hint = hintText
-        textSize = 14f
+        textSize = 13.5f
         setSingleLine(true)
         setPadding(dp(14), 0, dp(14), 0)
-        setTextColor(Color.rgb(41, 48, 61))
-        setHintTextColor(Color.rgb(145, 153, 164))
-        background = roundedCard()
+        setTextColor(textPrimary())
+        setHintTextColor(Color.rgb(145, 154, 164))
+        background = inputBackground()
+        elevation = dp(2).toFloat()
     }
 
     private fun secretField(hintText: String): EditText = editField(hintText).apply {
@@ -485,17 +687,46 @@ class MainActivity : Activity() {
 
     private fun sectionTitle(textValue: String): TextView = TextView(this).apply {
         text = textValue
-        textSize = 14f
-        setTextColor(Color.rgb(78, 88, 102))
+        textSize = 13f
+        setTextColor(textSecondary())
         setTypeface(typeface, Typeface.BOLD)
-        setPadding(dp(4), dp(20), dp(4), dp(8))
+        setPadding(dp(3), dp(22), dp(3), dp(9))
     }
 
-    private fun roundedCard(): GradientDrawable = GradientDrawable().apply {
-        setColor(Color.WHITE)
-        cornerRadius = dp(18).toFloat()
-        setStroke(dp(1), Color.rgb(229, 235, 238))
+    private fun panelBackground(): GradientDrawable = GradientDrawable().apply {
+        setColor(panelColor())
+        cornerRadius = dp(24).toFloat()
+        setStroke(dp(1), Color.argb(210, 255, 255, 255))
     }
+
+    private fun buttonBackground(active: Boolean): GradientDrawable = GradientDrawable().apply {
+        setColor(if (active) Color.rgb(225, 244, 239) else Color.rgb(239, 244, 246))
+        cornerRadius = dp(17).toFloat()
+        setStroke(dp(1), if (active) Color.rgb(199, 231, 222) else Color.rgb(221, 229, 233))
+    }
+
+    private fun inputBackground(): GradientDrawable = GradientDrawable().apply {
+        setColor(Color.rgb(235, 241, 244))
+        cornerRadius = dp(17).toFloat()
+        setStroke(dp(1), Color.rgb(218, 227, 231))
+    }
+
+    private fun pillBackground(color: Int): GradientDrawable = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(999).toFloat()
+    }
+
+    private fun weightedCardParams(startMargin: Int = 0, endMargin: Int = 0) =
+        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(startMargin)
+            rightMargin = dp(endMargin)
+        }
+
+    private fun weightedActionParams(startMargin: Int = 0, endMargin: Int = 0) =
+        LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+            leftMargin = dp(startMargin)
+            rightMargin = dp(endMargin)
+        }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
@@ -506,6 +737,14 @@ class MainActivity : Activity() {
         LinearLayout.LayoutParams.MATCH_PARENT,
         dp(heightDp)
     )
+
+    private fun bgColor(): Int = Color.rgb(232, 239, 242)
+    private fun panelColor(): Int = Color.rgb(242, 247, 249)
+    private fun accentColor(): Int = Color.rgb(25, 157, 130)
+    private fun accentDark(): Int = Color.rgb(21, 125, 106)
+    private fun textPrimary(): Int = Color.rgb(37, 47, 58)
+    private fun textSecondary(): Int = Color.rgb(75, 88, 101)
+    private fun textMuted(): Int = Color.rgb(118, 131, 143)
 
     private fun formatTime(timestamp: Long): String =
         SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
