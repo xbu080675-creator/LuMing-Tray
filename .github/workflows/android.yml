@@ -33,12 +33,64 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Prepare stable signing
+        env:
+          KS_B64: ${{ secrets.LUMING_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.LUMING_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LUMING_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.LUMING_KEY_PASSWORD }}
+          CERT_SHA256: ${{ secrets.LUMING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KS_B64:-}" ]; then
+            echo "LUMING_SIGNING_MODE=compile-check" >> "$GITHUB_ENV"
+            echo "LUMING_ARTIFACT_NAME=LuMing-Tray-0.17.6-compile-check" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          for value in KS_PASS KEY_ALIAS KEY_PASS CERT_SHA256; do
+            if [ -z "${!value:-}" ]; then
+              echo "::error::Stable signing is partially configured: missing $value"
+              exit 1
+            fi
+          done
+
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/luming-stable.jks"
+          chmod 600 "$RUNNER_TEMP/luming-stable.jks"
+          echo "LUMING_KEYSTORE_PATH=$RUNNER_TEMP/luming-stable.jks" >> "$GITHUB_ENV"
+          echo "LUMING_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+          echo "LUMING_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "LUMING_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+          echo "LUMING_CERT_SHA256=$CERT_SHA256" >> "$GITHUB_ENV"
+          echo "LUMING_SIGNING_MODE=stable" >> "$GITHUB_ENV"
+          echo "LUMING_ARTIFACT_NAME=LuMing-Tray-0.17.6-stable" >> "$GITHUB_ENV"
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify stable certificate
+        if: env.LUMING_SIGNING_MODE == 'stable'
+        run: |
+          set -euo pipefail
+          signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          "$signer" verify --verbose --print-certs "$apk"
+          got=$("$signer" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+          expected=$(printf '%s' "$LUMING_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')
+          if [ "$got" != "$expected" ]; then
+            echo "::error::APK signing certificate mismatch"
+            echo "expected=$expected"
+            echo "got=$got"
+            exit 1
+          fi
+
+      - name: Mark compile-only artifact
+        if: env.LUMING_SIGNING_MODE != 'stable'
+        run: echo "::warning::No stable signing secret is configured. This APK is compile-check only and must not replace a user install."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LuMing-Tray-0.17.5-debug
+          name: ${{ env.LUMING_ARTIFACT_NAME }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
