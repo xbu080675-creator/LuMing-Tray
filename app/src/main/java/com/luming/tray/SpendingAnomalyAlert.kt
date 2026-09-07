@@ -27,6 +27,7 @@ object SpendingAnomalyAlert {
     private const val CHANNEL_ID = "luming_spending_anomaly"
     private const val NOTIFICATION_ID = 1201
     private const val PREFS = "luming_spending_anomaly_state"
+    private const val EVALUATION_INTERVAL_MS = 60_000L
     private const val BURST_COOLDOWN_MS = 4L * 60L * 60L * 1000L
     private const val MAX_BURST_WINDOW_MS = 15L * 60L * 1000L
 
@@ -35,16 +36,35 @@ object SpendingAnomalyAlert {
         if (!config.spendingAlertEnabled) return
         val todayCost = stats.todayCost ?: return
         val now = stats.updatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val state = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        // Realtime mode may refresh every 10 seconds. Cost analytics does not need to scan the
+        // local history database that often, so evaluate at most once per minute.
+        val lastEvalAt = state.getLong("last_eval_at", 0L)
+        if (lastEvalAt > 0L && now - lastEvalAt < EVALUATION_INTERVAL_MS) return
+        val lastEvalCost = state.getString("last_eval_cost", null)?.toDoubleOrNull()
+        state.edit()
+            .putLong("last_eval_at", now)
+            .putString("last_eval_cost", todayCost.toString())
+            .apply()
 
         val local = UsageHistory.analyze(context, now)
         val priorDays = local.daily.dropLast(1).filter { it.hasData }
         val priorAverage = priorDays.takeIf { it.size >= 2 }?.map { it.cost }?.average()
 
+        val referenceCost = lastEvalCost ?: previous?.todayCost
+        val referenceAt = lastEvalAt.takeIf { it > 0L } ?: previous?.updatedAt
         val anomaly = dailyAnomaly(todayCost, priorAverage, config.spendingAlertDailyMultiplier)
-            ?: burstAnomaly(todayCost, previous, now, priorAverage, config.spendingAlertBurstMultiplier)
+            ?: burstAnomaly(
+                todayCost,
+                referenceCost,
+                referenceAt,
+                now,
+                priorAverage,
+                config.spendingAlertBurstMultiplier
+            )
             ?: return
 
-        val state = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(now))
         val shouldNotify = when (anomaly.kind) {
             SpendingAnomalyKind.DAILY_PACE -> state.getString("daily_alert_day", "") != today
@@ -86,13 +106,15 @@ object SpendingAnomalyAlert {
 
     private fun burstAnomaly(
         todayCost: Double,
-        previous: UsageStats?,
+        referenceCost: Double?,
+        referenceAt: Long?,
         now: Long,
         priorAverage: Double?,
         multiplier: Double
     ): SpendingAnomaly? {
-        val previousCost = previous?.todayCost ?: return null
-        val elapsed = now - previous.updatedAt
+        val previousCost = referenceCost ?: return null
+        val previousAt = referenceAt ?: return null
+        val elapsed = now - previousAt
         if (elapsed <= 0L || elapsed > MAX_BURST_WINDOW_MS) return null
         val delta = todayCost - previousCost
         if (delta <= 0.0) return null
