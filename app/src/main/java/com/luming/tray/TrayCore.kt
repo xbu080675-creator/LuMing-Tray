@@ -68,7 +68,6 @@ object TrayStore {
             .putLong("updatedAt", stats.updatedAt)
             .apply()
 
-        // Cost history is collected continuously, not only when the analysis screen is opened.
         UsageHistory.recordSnapshot(context, stats)
         BalanceAlert.evaluate(context, stats)
         SpendingAnomalyAlert.evaluate(context, stats, previous)
@@ -92,23 +91,40 @@ object TrayStore {
         )
     }
 
-    fun saveConfig(context: Context, config: TrayConfig) {
-        // Secrets are deliberately written only through SecureVault. The normal preference file
-        // contains settings and non-sensitive metadata, never API keys, cookies or bearer tokens.
-        SecureVault.put(context, "apiKey", config.apiKey.trim())
-        SecureVault.put(context, "accessToken", config.accessToken.trim())
-        SecureVault.put(context, "consoleCookie", config.consoleCookie.trim())
-        SecureVault.put(context, "webAuthToken", config.webAuthToken.trim())
-        SecureVault.put(context, "webRefreshToken", config.webRefreshToken.trim())
+    /**
+     * Persists settings synchronously because callers often start/stop services immediately after
+     * saving. Using apply() here allowed a newly-started service to read the previous configuration.
+     * Secrets are rewritten only when their plaintext value actually changed, avoiding repeated
+     * Keystore work while the floating window merely saves its geometry.
+     */
+    fun saveConfig(context: Context, config: TrayConfig): Boolean {
+        val app = context.applicationContext
+        val p = prefs(app)
+        val oldFloating = p.getBoolean("floatingEnabled", false)
 
-        prefs(context).edit()
-            .putString("baseUrl", config.baseUrl.trim().ifBlank { TrayConfig().baseUrl })
+        fun saveSecret(name: String, value: String): Boolean {
+            val next = value.trim()
+            val current = SecureVault.get(app, name)
+            return if (current == next) true else SecureVault.put(app, name, next)
+        }
+
+        val vaultOk = listOf(
+            saveSecret("apiKey", config.apiKey),
+            saveSecret("accessToken", config.accessToken),
+            saveSecret("consoleCookie", config.consoleCookie),
+            saveSecret("webAuthToken", config.webAuthToken),
+            saveSecret("webRefreshToken", config.webRefreshToken)
+        ).all { it }
+
+        val normalizedBase = normalizeBaseUrl(config.baseUrl)
+        val settingsOk = p.edit()
+            .putString("baseUrl", normalizedBase)
             .remove("apiKey")
             .remove("accessToken")
             .remove("consoleCookie")
             .remove("webAuthToken")
             .remove("webRefreshToken")
-            .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
+            .putLong("webTokenExpiresAt", normalizeEpochMillis(config.webTokenExpiresAt))
             .putBoolean("realtimeEnabled", config.realtimeEnabled)
             .putBoolean("persistentNotificationEnabled", config.persistentNotificationEnabled)
             .putBoolean("floatingEnabled", config.floatingEnabled)
@@ -121,25 +137,37 @@ object TrayStore {
             .putBoolean("spendingAlertEnabled", config.spendingAlertEnabled)
             .putString("spendingAlertDailyMultiplier", config.spendingAlertDailyMultiplier.toString())
             .putString("spendingAlertBurstMultiplier", config.spendingAlertBurstMultiplier.toString())
-            .putBoolean("secureVaultMigratedV1", true)
-            .apply()
+            .putBoolean("secureVaultMigratedV1", vaultOk)
+            .putBoolean("secureVaultWriteFailed", !vaultOk)
+            .commit()
+
+        val ok = vaultOk && settingsOk
+        if (!ok) {
+            saveLastMessage(app, "安全存储写入失败；旧凭据已保留，请重新打开应用检查授权")
+        }
+
+        // Floating mode is continuous work. Ensure the foreground runtime is attached as soon as
+        // the setting changes, even when realtime/persistent toggles are otherwise off.
+        if (settingsOk && oldFloating != config.floatingEnabled) {
+            if (config.floatingEnabled) RealtimeUsageService.start(app)
+            else RealtimeUsageService.stop(app)
+        }
+        return ok
     }
 
     fun loadConfig(context: Context): TrayConfig {
-        val p = prefs(context)
-
-        // Transparently upgrade 0.7.x installs. Once the old values are copied into the
-        // Keystore-backed vault, the plaintext keys are deleted from luming_tray preferences.
-        SecureVault.migrateLegacy(context, p)
+        val app = context.applicationContext
+        val p = prefs(app)
+        SecureVault.migrateLegacy(app, p)
 
         return TrayConfig(
-            baseUrl = p.getString("baseUrl", null)?.takeIf { it.isNotBlank() } ?: TrayConfig().baseUrl,
-            apiKey = SecureVault.get(context, "apiKey"),
-            accessToken = SecureVault.get(context, "accessToken"),
-            consoleCookie = SecureVault.get(context, "consoleCookie"),
-            webAuthToken = SecureVault.get(context, "webAuthToken"),
-            webRefreshToken = SecureVault.get(context, "webRefreshToken"),
-            webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L),
+            baseUrl = normalizeBaseUrl(p.getString("baseUrl", null) ?: TrayConfig().baseUrl),
+            apiKey = SecureVault.get(app, "apiKey"),
+            accessToken = SecureVault.get(app, "accessToken"),
+            consoleCookie = SecureVault.get(app, "consoleCookie"),
+            webAuthToken = SecureVault.get(app, "webAuthToken"),
+            webRefreshToken = SecureVault.get(app, "webRefreshToken"),
+            webTokenExpiresAt = normalizeEpochMillis(p.getLong("webTokenExpiresAt", 0L)),
             realtimeEnabled = p.getBoolean("realtimeEnabled", true),
             persistentNotificationEnabled = p.getBoolean("persistentNotificationEnabled", true),
             floatingEnabled = p.getBoolean("floatingEnabled", false),
@@ -155,6 +183,10 @@ object TrayStore {
         )
     }
 
+    fun secureVaultHealthy(context: Context): Boolean =
+        !prefs(context.applicationContext).getBoolean("secureVaultWriteFailed", false) &&
+            SecureVault.lastError(context.applicationContext).isBlank()
+
     fun saveBalanceAlertState(context: Context, state: Int) {
         prefs(context).edit().putInt("balanceAlertState", state).apply()
     }
@@ -168,6 +200,20 @@ object TrayStore {
 
     fun loadLastMessage(context: Context): String =
         prefs(context).getString("lastMessage", "") ?: ""
+
+    private fun normalizeBaseUrl(value: String): String {
+        val clean = value.trim().trimEnd('/').ifBlank { TrayConfig().baseUrl }
+        return when {
+            clean.endsWith("/api/v1") -> clean.removeSuffix("/api/v1") + "/v1"
+            else -> clean
+        }
+    }
+
+    private fun normalizeEpochMillis(value: Long): Long = when {
+        value <= 0L -> 0L
+        value < 1_000_000_000_000L -> value * 1000L
+        else -> value
+    }
 }
 
 object TrayNotification {
