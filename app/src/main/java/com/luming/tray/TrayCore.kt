@@ -36,13 +36,17 @@ data class TrayConfig(
     val webRefreshToken: String = "",
     val webTokenExpiresAt: Long = 0L,
     val realtimeEnabled: Boolean = true,
+    val persistentNotificationEnabled: Boolean = true,
     val floatingEnabled: Boolean = false,
     val floatingWidthDp: Int = 230,
     val floatingHeightDp: Int = 126,
     val floatingX: Int = 24,
     val floatingY: Int = 220,
     val balanceAlertEnabled: Boolean = true,
-    val balanceAlertThreshold: Double = 0.50
+    val balanceAlertThreshold: Double = 0.50,
+    val spendingAlertEnabled: Boolean = true,
+    val spendingAlertDailyMultiplier: Double = 1.50,
+    val spendingAlertBurstMultiplier: Double = 3.00
 )
 
 object TrayStore {
@@ -50,6 +54,7 @@ object TrayStore {
     private fun prefs(context: Context) = context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
     fun saveStats(context: Context, stats: UsageStats) {
+        val previous = loadStats(context)
         prefs(context).edit()
             .putString("balance", stats.balance?.toString())
             .putString("todayCost", stats.todayCost?.toString())
@@ -63,7 +68,10 @@ object TrayStore {
             .putLong("updatedAt", stats.updatedAt)
             .apply()
 
+        // Cost history is collected continuously, not only when the analysis screen is opened.
+        UsageHistory.recordSnapshot(context, stats)
         BalanceAlert.evaluate(context, stats)
+        SpendingAnomalyAlert.evaluate(context, stats, previous)
     }
 
     fun loadStats(context: Context): UsageStats? {
@@ -102,6 +110,7 @@ object TrayStore {
             .remove("webRefreshToken")
             .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
             .putBoolean("realtimeEnabled", config.realtimeEnabled)
+            .putBoolean("persistentNotificationEnabled", config.persistentNotificationEnabled)
             .putBoolean("floatingEnabled", config.floatingEnabled)
             .putInt("floatingWidthDp", config.floatingWidthDp)
             .putInt("floatingHeightDp", config.floatingHeightDp)
@@ -109,6 +118,9 @@ object TrayStore {
             .putInt("floatingY", config.floatingY)
             .putBoolean("balanceAlertEnabled", config.balanceAlertEnabled)
             .putString("balanceAlertThreshold", config.balanceAlertThreshold.toString())
+            .putBoolean("spendingAlertEnabled", config.spendingAlertEnabled)
+            .putString("spendingAlertDailyMultiplier", config.spendingAlertDailyMultiplier.toString())
+            .putString("spendingAlertBurstMultiplier", config.spendingAlertBurstMultiplier.toString())
             .putBoolean("secureVaultMigratedV1", true)
             .apply()
     }
@@ -129,13 +141,17 @@ object TrayStore {
             webRefreshToken = SecureVault.get(context, "webRefreshToken"),
             webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L),
             realtimeEnabled = p.getBoolean("realtimeEnabled", true),
+            persistentNotificationEnabled = p.getBoolean("persistentNotificationEnabled", true),
             floatingEnabled = p.getBoolean("floatingEnabled", false),
             floatingWidthDp = p.getInt("floatingWidthDp", 230),
             floatingHeightDp = p.getInt("floatingHeightDp", 126),
             floatingX = p.getInt("floatingX", 24),
             floatingY = p.getInt("floatingY", 220),
             balanceAlertEnabled = p.getBoolean("balanceAlertEnabled", true),
-            balanceAlertThreshold = p.getString("balanceAlertThreshold", "0.50")?.toDoubleOrNull() ?: 0.50
+            balanceAlertThreshold = p.getString("balanceAlertThreshold", "0.50")?.toDoubleOrNull() ?: 0.50,
+            spendingAlertEnabled = p.getBoolean("spendingAlertEnabled", true),
+            spendingAlertDailyMultiplier = p.getString("spendingAlertDailyMultiplier", "1.50")?.toDoubleOrNull() ?: 1.50,
+            spendingAlertBurstMultiplier = p.getString("spendingAlertBurstMultiplier", "3.00")?.toDoubleOrNull() ?: 3.00
         )
     }
 
@@ -162,7 +178,7 @@ object TrayNotification {
         if (Build.VERSION.SDK_INT >= 26) {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "LuMing API 用量", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "显示 LuMing API 的余额、消费和 Token"
+                    description = "常驻显示 LuMing API 的余额、消费和 Token"
                     setShowBadge(false)
                 }
             )
@@ -218,7 +234,7 @@ object TrayNotification {
             "打开 LuMing Tray，网页登录后即可自动读取。"
         }
 
-        return Notification.Builder(context, CHANNEL_ID)
+        val builder = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(text)
@@ -227,9 +243,15 @@ object TrayNotification {
             .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_popup_sync), "刷新", refresh).build())
             .addAction(Notification.Action.Builder(Icon.createWithResource(context, android.R.drawable.ic_menu_view), "充值", recharge).build())
             .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setLocalOnly(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .build()
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return builder.build()
     }
 
     fun show(context: Context, stats: UsageStats? = TrayStore.loadStats(context)) {
