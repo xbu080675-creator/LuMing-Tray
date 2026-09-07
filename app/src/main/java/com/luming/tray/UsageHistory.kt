@@ -41,6 +41,7 @@ object UsageHistory {
     private const val DB_NAME = "luming_usage_history.db"
     private const val DB_VERSION = 1
     private const val SAMPLE_WINDOW_MS = 5 * 60 * 1000L
+    private const val MIN_UNCHANGED_UPDATE_MS = 60 * 1000L
     private const val RETENTION_DAYS = 120
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
@@ -87,15 +88,21 @@ object UsageHistory {
         var lastId: Long? = null
         var lastTs = 0L
         var lastDay: String? = null
+        var lastCost: Double? = null
+        var lastRequests: Long? = null
+        var lastTokens: Long? = null
 
         database.rawQuery(
-            "SELECT id, ts, day FROM snapshots ORDER BY ts DESC LIMIT 1",
+            "SELECT id, ts, day, today_cost, requests, total_tokens FROM snapshots ORDER BY ts DESC LIMIT 1",
             null
         ).use { cursor ->
             if (cursor.moveToFirst()) {
                 lastId = cursor.getLong(0)
                 lastTs = cursor.getLong(1)
                 lastDay = cursor.getString(2)
+                lastCost = if (cursor.isNull(3)) null else cursor.getDouble(3)
+                lastRequests = if (cursor.isNull(4)) null else cursor.getLong(4)
+                lastTokens = if (cursor.isNull(5)) null else cursor.getLong(5)
             }
         }
 
@@ -111,8 +118,17 @@ object UsageHistory {
             stats.avgResponseSeconds?.let { put("avg_response", it) } ?: putNull("avg_response")
         }
 
-        if (lastId != null && lastDay == day && now - lastTs < SAMPLE_WINDOW_MS) {
-            database.update("snapshots", values, "id=?", arrayOf(lastId.toString()))
+        // Use fixed 5-minute buckets. Updating the timestamp on every 10-second realtime refresh
+        // must not postpone insertion forever; crossing a bucket boundary always creates a row.
+        val sameBucket = lastId != null && lastDay == day &&
+            lastTs / SAMPLE_WINDOW_MS == now / SAMPLE_WINDOW_MS
+        if (sameBucket) {
+            val unchanged = lastCost == stats.todayCost &&
+                lastRequests == stats.requests &&
+                lastTokens == stats.totalTokens
+            if (!unchanged || now - lastTs >= MIN_UNCHANGED_UPDATE_MS) {
+                database.update("snapshots", values, "id=?", arrayOf(lastId.toString()))
+            }
         } else {
             database.insert("snapshots", null, values)
         }
