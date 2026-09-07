@@ -82,6 +82,14 @@ class FloatingTrayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun showOverlay(config: TrayConfig) {
+        // Keep the resize grip outside the card's normal vertical layout. When the window is
+        // shrunk, card content can be clipped, but the grip stays pinned to the bottom-right
+        // corner and can always be used to grow the window again.
+        val overlayRoot = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(10), dp(7))
@@ -151,21 +159,39 @@ class FloatingTrayService : Service() {
             minimumHeight = dp(52)
         }
         footer.addView(TextView(this).apply {
-            text = "拖标题移动 · 拖底栏缩放"
+            text = "拖标题移动 · 右下角缩放"
             textSize = 9.5f
             setTextColor(Color.rgb(130, 138, 148))
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(footer)
 
-        val resize = TextView(this).apply {
+        overlayRoot.addView(
+            card,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val resizeGrip = TextView(this).apply {
             text = "↘"
             textSize = 24f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(72, 82, 94))
-            minWidth = dp(60)
-            minHeight = dp(52)
+            background = GradientDrawable().apply {
+                setColor(Color.argb(205, 245, 248, 249))
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), Color.argb(190, 180, 190, 198))
+            }
+            elevation = dp(14).toFloat()
         }
-        footer.addView(resize, LinearLayout.LayoutParams(dp(60), dp(52)))
-        card.addView(footer)
+        overlayRoot.addView(
+            resizeGrip,
+            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END or Gravity.BOTTOM).apply {
+                rightMargin = dp(2)
+                bottomMargin = dp(2)
+            }
+        )
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
         val height = dp(config.floatingHeightDp.coerceIn(MIN_HEIGHT_DP, MAX_HEIGHT_DP))
@@ -186,13 +212,13 @@ class FloatingTrayService : Service() {
 
         clampPosition(lp)
         params = lp
-        rootView = card
+        rootView = overlayRoot
 
         attachDrag(header, lp)
-        attachResize(footer, lp)
+        attachResize(resizeGrip, lp)
 
         try {
-            windowManager.addView(card, lp)
+            windowManager.addView(overlayRoot, lp)
             handler.removeCallbacks(refreshRunnable)
             handler.post(refreshRunnable)
         } catch (_: Exception) {
@@ -524,7 +550,7 @@ class FloatingTrayService : Service() {
     companion object {
         private const val MIN_WIDTH_DP = 150
         private const val MAX_WIDTH_DP = 420
-        private const val MIN_HEIGHT_DP = 80
+        private const val MIN_HEIGHT_DP = 96
         private const val MAX_HEIGHT_DP = 300
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
         private const val RESIZE_SENSITIVITY = 1.25f
