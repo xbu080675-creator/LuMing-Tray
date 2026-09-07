@@ -12,10 +12,7 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import org.json.JSONObject
 
-/**
- * Persists the latest channel-monitor states and raises a notification only when a known model
- * changes into a worse state. The first successful snapshot establishes a baseline silently.
- */
+/** Persists model-monitor state and runtime health across process/service restarts. */
 object ModelAvailabilityMonitor {
     private const val PREFS = "luming_model_availability_monitor_v1"
     private const val CHANNEL_ID = "luming_model_availability_alert"
@@ -24,31 +21,44 @@ object ModelAvailabilityMonitor {
     private const val KEY_INITIALIZED = "initialized"
     private const val KEY_LAST_ATTEMPT_AT = "last_attempt_at"
     private const val KEY_LAST_SUCCESS_AT = "last_success_at"
+    private const val KEY_LAST_ERROR = "last_error"
+    private const val KEY_CONSECUTIVE_FAILURES = "consecutive_failures"
 
     fun lastAttemptAt(context: Context): Long =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(KEY_LAST_ATTEMPT_AT, 0L)
+        prefs(context).getLong(KEY_LAST_ATTEMPT_AT, 0L)
 
     fun lastSuccessAt(context: Context): Long =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(KEY_LAST_SUCCESS_AT, 0L)
+        prefs(context).getLong(KEY_LAST_SUCCESS_AT, 0L)
+
+    fun lastError(context: Context): String =
+        prefs(context).getString(KEY_LAST_ERROR, "").orEmpty()
+
+    fun consecutiveFailures(context: Context): Int =
+        prefs(context).getInt(KEY_CONSECUTIVE_FAILURES, 0)
 
     fun markAttempt(context: Context, at: Long = System.currentTimeMillis()) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
+        prefs(context).edit().putLong(KEY_LAST_ATTEMPT_AT, at).apply()
+    }
+
+    fun markFailure(context: Context, message: String, at: Long = System.currentTimeMillis()) {
+        val p = prefs(context)
+        val failures = (p.getInt(KEY_CONSECUTIVE_FAILURES, 0) + 1).coerceAtMost(10_000)
+        p.edit()
             .putLong(KEY_LAST_ATTEMPT_AT, at)
+            .putString(KEY_LAST_ERROR, message.take(180))
+            .putInt(KEY_CONSECUTIVE_FAILURES, failures)
             .apply()
     }
 
     fun process(context: Context, monitors: List<ModelMonitor>, at: Long = System.currentTimeMillis()) {
         if (monitors.isEmpty()) return
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val p = prefs(context)
         val previous = try {
-            JSONObject(prefs.getString(KEY_STATES, "{}") ?: "{}")
+            JSONObject(p.getString(KEY_STATES, "{}") ?: "{}")
         } catch (_: Exception) {
             JSONObject()
         }
-        val initialized = prefs.getBoolean(KEY_INITIALIZED, false)
+        val initialized = p.getBoolean(KEY_INITIALIZED, false)
         val current = JSONObject()
         val worsened = mutableListOf<ModelMonitor>()
 
@@ -62,11 +72,13 @@ object ModelAvailabilityMonitor {
             }
         }
 
-        prefs.edit()
+        p.edit()
             .putString(KEY_STATES, current.toString())
             .putBoolean(KEY_INITIALIZED, true)
             .putLong(KEY_LAST_SUCCESS_AT, at)
             .putLong(KEY_LAST_ATTEMPT_AT, at)
+            .remove(KEY_LAST_ERROR)
+            .putInt(KEY_CONSECUTIVE_FAILURES, 0)
             .apply()
 
         if (worsened.isNotEmpty() && canNotify(context)) {
@@ -75,6 +87,9 @@ object ModelAvailabilityMonitor {
                 .notify(NOTIFICATION_ID, buildNotification(context, worsened))
         }
     }
+
+    private fun prefs(context: Context) =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun buildNotification(context: Context, changed: List<ModelMonitor>): Notification {
         val open = PendingIntent.getActivity(
