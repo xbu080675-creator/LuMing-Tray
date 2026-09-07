@@ -275,5 +275,5 @@ object ModelAvailabilityClient {
         if (!has(key) || isNull(key)) null else optDouble(key)
 
     fun rateLabel(value: Double): String =
-        String.format(Locale.US, "%.3fx", value).trimEnd('0').trimEnd('.') + if (value == 0.0) "x" else ""
+        String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.') + "x"
 }
