@@ -42,11 +42,9 @@ class UsageExplorerActivity : Activity() {
     private var currentFilter = UsageExplorerFilter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        LuMingTheme.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bgColor()
-        window.navigationBarColor = bgColor()
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        LuMingTheme.applySystemBars(this)
         setContentView(buildUi())
         loadData(currentFilter)
     }
@@ -143,7 +141,7 @@ class UsageExplorerActivity : Activity() {
             gravity = Gravity.CENTER
             setTextColor(accentDark())
             setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = pillBackground(Color.rgb(222, 243, 237))
+            background = pillBackground(LuMingTheme.positivePill(this@UsageExplorerActivity))
         }
         row.addView(statusPill)
         return row
@@ -392,21 +390,21 @@ class UsageExplorerActivity : Activity() {
         text = value; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textSecondary()); setPadding(dp(3), dp(22), dp(3), dp(9))
     }
     private fun softPanel() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = panelBackground(); elevation = dp(7).toFloat() }
-    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(210, 255, 255, 255)) }
-    private fun miniBackground() = GradientDrawable().apply { setColor(Color.rgb(236, 243, 245)); cornerRadius = dp(16).toFloat() }
-    private fun buttonBackground() = GradientDrawable().apply { setColor(Color.rgb(239, 244, 246)); cornerRadius = dp(16).toFloat(); setStroke(dp(1), Color.rgb(220, 228, 232)) }
-    private fun inputBackground() = GradientDrawable().apply { setColor(Color.rgb(235, 241, 244)); cornerRadius = dp(16).toFloat(); setStroke(dp(1), Color.rgb(218, 227, 231)) }
+    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), LuMingTheme.border(this@UsageExplorerActivity)) }
+    private fun miniBackground() = GradientDrawable().apply { setColor(LuMingTheme.panelAlt(this@UsageExplorerActivity)); cornerRadius = dp(16).toFloat() }
+    private fun buttonBackground() = GradientDrawable().apply { setColor(LuMingTheme.panelAlt(this@UsageExplorerActivity)); cornerRadius = dp(16).toFloat(); setStroke(dp(1), LuMingTheme.border(this@UsageExplorerActivity)) }
+    private fun inputBackground() = GradientDrawable().apply { setColor(LuMingTheme.input(this@UsageExplorerActivity)); cornerRadius = dp(16).toFloat(); setStroke(dp(1), LuMingTheme.border(this@UsageExplorerActivity)) }
     private fun pillBackground(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(999).toFloat() }
     private fun weighted(start: Int = 0, end: Int = 0) = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(start); rightMargin = dp(end) }
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     private fun matchHeight(dpValue: Int) = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(dpValue))
-    private fun bgColor() = Color.rgb(232, 239, 242)
-    private fun panelColor() = Color.rgb(242, 247, 249)
-    private fun accentColor() = Color.rgb(25, 157, 130)
-    private fun accentDark() = Color.rgb(21, 125, 106)
-    private fun textPrimary() = Color.rgb(37, 47, 58)
-    private fun textSecondary() = Color.rgb(75, 88, 101)
-    private fun textMuted() = Color.rgb(118, 131, 143)
+    private fun bgColor() = LuMingTheme.bg(this)
+    private fun panelColor() = LuMingTheme.panel(this)
+    private fun accentColor() = LuMingTheme.accent(this)
+    private fun accentDark() = LuMingTheme.accentDark(this)
+    private fun textPrimary() = LuMingTheme.textPrimary(this)
+    private fun textSecondary() = LuMingTheme.textSecondary(this)
+    private fun textMuted() = LuMingTheme.textMuted(this)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun money(value: Double) = String.format(Locale.US, "$%.4f", value.coerceAtLeast(0.0)).trimEnd('0').trimEnd('.')
     private fun rate(value: Double) = String.format(Locale.US, "%.3gx", value)
@@ -421,7 +419,7 @@ class UsageExplorerActivity : Activity() {
 
 private class DonutChartView(context: android.content.Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 42f; strokeCap = Paint.Cap.BUTT }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(54, 66, 78); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LuMingTheme.textPrimary(context); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private var items: List<UsageBreakdownItem> = emptyList()
     private val colors = intArrayOf(
         Color.rgb(62, 132, 238), Color.rgb(32, 181, 134), Color.rgb(246, 166, 35),
@@ -453,8 +451,8 @@ private class DonutChartView(context: android.content.Context) : View(context) {
 
 private class TokenTrendView(context: android.content.Context) : View(context) {
     private var points: List<UsageTrendPoint> = emptyList()
-    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(207, 218, 223); strokeWidth = 1.5f }
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(112, 125, 137); textSize = 23f }
+    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LuMingTheme.divider(context); strokeWidth = 1.5f }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LuMingTheme.textMuted(context); textSize = 23f }
     private val seriesPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val colors = intArrayOf(Color.rgb(62, 132, 238), Color.rgb(34, 174, 133), Color.rgb(242, 162, 39), Color.rgb(154, 109, 218))
 

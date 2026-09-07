@@ -22,8 +22,8 @@ android {
         applicationId = "com.luming.tray"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "0.17.6.4"
+        versionCode = 35
+        versionName = "0.17.6.5"
     }
 
     signingConfigs {

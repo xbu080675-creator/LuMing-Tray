@@ -36,11 +36,9 @@ class AnalysisActivity : Activity() {
     private lateinit var insightsText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        LuMingTheme.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bgColor()
-        window.navigationBarColor = bgColor()
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        LuMingTheme.applySystemBars(this)
         setContentView(buildUi())
         loadReport()
     }
@@ -103,7 +101,7 @@ class AnalysisActivity : Activity() {
             setTextColor(accentDark())
             gravity = Gravity.CENTER
             setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = pillBackground(Color.rgb(222, 243, 237))
+            background = pillBackground(LuMingTheme.positivePill(this@AnalysisActivity))
         }
         header.addView(sourcePill)
         root.addView(header)
@@ -356,7 +354,7 @@ class AnalysisActivity : Activity() {
     private fun panelBackground() = GradientDrawable().apply {
         setColor(panelColor())
         cornerRadius = dp(24).toFloat()
-        setStroke(dp(1), Color.argb(210, 255, 255, 255))
+        setStroke(dp(1), LuMingTheme.border(this@AnalysisActivity))
     }
 
     private fun pillBackground(color: Int) = GradientDrawable().apply {
@@ -369,28 +367,28 @@ class AnalysisActivity : Activity() {
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-    private fun bgColor() = Color.rgb(232, 239, 242)
-    private fun panelColor() = Color.rgb(242, 247, 249)
-    private fun accentColor() = Color.rgb(25, 157, 130)
-    private fun accentDark() = Color.rgb(21, 125, 106)
-    private fun textPrimary() = Color.rgb(37, 47, 58)
-    private fun textSecondary() = Color.rgb(75, 88, 101)
-    private fun textMuted() = Color.rgb(118, 131, 143)
+    private fun bgColor() = LuMingTheme.bg(this)
+    private fun panelColor() = LuMingTheme.panel(this)
+    private fun accentColor() = LuMingTheme.accent(this)
+    private fun accentDark() = LuMingTheme.accentDark(this)
+    private fun textPrimary() = LuMingTheme.textPrimary(this)
+    private fun textSecondary() = LuMingTheme.textSecondary(this)
+    private fun textMuted() = LuMingTheme.textMuted(this)
     private fun money(value: Double) = String.format(Locale.US, "$%.4f", max(0.0, value)).trimEnd('0').trimEnd('.')
     private fun percent(value: Double) = String.format(Locale.US, "%.1f%%", value * 100.0)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
 
 class SpendBarChart(context: Context) : View(context) {
-    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(25, 157, 130) }
-    private val missingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(211, 220, 224) }
+    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LuMingTheme.accent(context) }
+    private val missingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LuMingTheme.divider(context) }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(112, 125, 137)
+        color = LuMingTheme.textMuted(context)
         textSize = 10f * resources.displayMetrics.scaledDensity
         textAlign = Paint.Align.CENTER
     }
     private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(65, 78, 90)
+        color = LuMingTheme.textSecondary(context)
         textSize = 9f * resources.displayMetrics.scaledDensity
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)

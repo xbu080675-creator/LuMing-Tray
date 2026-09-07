@@ -42,7 +42,9 @@ class AccountActivity : FragmentActivity() {
     private var loading = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        LuMingTheme.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
+        LuMingTheme.applySystemBars(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(buildUi())
         loadData()
@@ -82,7 +84,7 @@ class AccountActivity : FragmentActivity() {
         header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         statusPill = TextView(this).apply {
             text = "同步中…"; textSize = 10f; gravity = Gravity.CENTER; setTextColor(accentDark())
-            setPadding(dp(10), dp(6), dp(10), dp(6)); background = pillBackground(Color.rgb(222, 243, 237))
+            setPadding(dp(10), dp(6), dp(10), dp(6)); background = pillBackground(LuMingTheme.positivePill(this@AccountActivity))
         }
         header.addView(statusPill)
         root.addView(header)
@@ -189,8 +191,17 @@ class AccountActivity : FragmentActivity() {
         val securityPanel = softPanel().apply { setPadding(dp(16), dp(15), dp(16), dp(15)) }
         securityPanel.addView(securityRow("密码", "修改站点登录密码", "修改") { authenticate("修改站点密码") { openPasswordDialog() } })
         securityPanel.addView(divider())
-        val totpText = when (p.totpEnabled) { true -> "已启用 TOTP 双重验证"; false -> "未启用 TOTP"; null -> "站点未返回 TOTP 状态" }
-        securityPanel.addView(securityRow("双重验证", totpText, if (p.totpEnabled == true) "管理" else "启用") {
+        val totpText = when (p.totpEnabled) {
+            true -> "已启用 TOTP 双重验证"
+            false -> "未启用 TOTP"
+            null -> "当前站点暂未提供双重验证功能"
+        }
+        val totpAction = when (p.totpEnabled) {
+            true -> "管理"
+            false -> "启用"
+            null -> "暂不支持"
+        }
+        securityPanel.addView(securityRow("双重验证", totpText, totpAction, enabled = p.totpEnabled != null) {
             authenticate("管理双重验证") { if (p.totpEnabled == true) beginTotpDisable() else beginTotpSetup() }
         })
         securityPanel.addView(divider())
@@ -375,13 +386,16 @@ class AccountActivity : FragmentActivity() {
         toast("密钥已复制，45 秒后清理剪贴板")
     }
 
-    private fun securityRow(title: String, subtitle: String, action: String, onClick: () -> Unit): View {
+    private fun securityRow(title: String, subtitle: String, action: String, enabled: Boolean = true, onClick: () -> Unit): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
         val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text.addView(TextView(this).apply { this.text = title; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()) })
         text.addView(info(subtitle).apply { setPadding(0, dp(3), 0, 0) })
         row.addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(smallButton(action, onClick), LinearLayout.LayoutParams(dp(105), dp(42)))
+        row.addView(smallButton(action, onClick).apply {
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.52f
+        }, LinearLayout.LayoutParams(dp(105), dp(42)))
         return row
     }
 
@@ -406,14 +420,14 @@ class AccountActivity : FragmentActivity() {
     }
     private fun smallButton(label: String, onClick: () -> Unit) = actionButton(label, onClick).apply { textSize = 11.5f }
     private fun editField(hintValue: String) = EditText(this).apply {
-        hint = hintValue; textSize = 13f; setSingleLine(true); setPadding(dp(14), 0, dp(14), 0); setTextColor(textPrimary()); setHintTextColor(Color.rgb(145, 154, 164)); background = inputBackground()
+        hint = hintValue; textSize = 13f; setSingleLine(true); setPadding(dp(14), 0, dp(14), 0); setTextColor(textPrimary()); setHintTextColor(LuMingTheme.hint(this@AccountActivity)); background = inputBackground()
     }
     private fun passwordField(hintValue: String) = editField(hintValue).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
     private fun wrap(view: View) = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(6), dp(18), 0); addView(view, matchHeight(52)) }
     private fun softPanel() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = panelBackground(); elevation = dp(7).toFloat() }
-    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(210, 255, 255, 255)) }
-    private fun buttonBackground(active: Boolean) = GradientDrawable().apply { setColor(if (active) Color.rgb(225, 244, 239) else Color.rgb(239, 244, 246)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), if (active) Color.rgb(199, 231, 222) else Color.rgb(221, 229, 233)) }
-    private fun inputBackground() = GradientDrawable().apply { setColor(Color.rgb(235, 241, 244)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), Color.rgb(218, 227, 231)) }
+    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), LuMingTheme.border(this@AccountActivity)) }
+    private fun buttonBackground(active: Boolean) = GradientDrawable().apply { setColor(if (active) LuMingTheme.activeBg(this@AccountActivity) else LuMingTheme.panelAlt(this@AccountActivity)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), if (active) LuMingTheme.activeBorder(this@AccountActivity) else LuMingTheme.border(this@AccountActivity)) }
+    private fun inputBackground() = GradientDrawable().apply { setColor(LuMingTheme.input(this@AccountActivity)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), LuMingTheme.border(this@AccountActivity)) }
     private fun pillBackground(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(999).toFloat() }
     private fun weighted(start: Int = 0, end: Int = 0) = LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(start); rightMargin = dp(end) }
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -425,12 +439,12 @@ class AccountActivity : FragmentActivity() {
     private fun money(value: Double) = String.format(Locale.US, "$%.4f", value).trimEnd('0').trimEnd('.')
     private fun shortDate(value: String?): String = value?.take(10) ?: "--"
     private fun toast(value: String) = Toast.makeText(this, value, Toast.LENGTH_SHORT).show()
-    private fun bgColor() = Color.rgb(232, 239, 242)
-    private fun panelColor() = Color.rgb(242, 247, 249)
-    private fun accentColor() = Color.rgb(25, 157, 130)
-    private fun accentDark() = Color.rgb(21, 125, 106)
-    private fun textPrimary() = Color.rgb(37, 47, 58)
-    private fun textSecondary() = Color.rgb(75, 88, 101)
-    private fun textMuted() = Color.rgb(118, 131, 143)
+    private fun bgColor() = LuMingTheme.bg(this)
+    private fun panelColor() = LuMingTheme.panel(this)
+    private fun accentColor() = LuMingTheme.accent(this)
+    private fun accentDark() = LuMingTheme.accentDark(this)
+    private fun textPrimary() = LuMingTheme.textPrimary(this)
+    private fun textSecondary() = LuMingTheme.textSecondary(this)
+    private fun textMuted() = LuMingTheme.textMuted(this)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }

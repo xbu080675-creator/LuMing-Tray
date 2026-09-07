@@ -44,6 +44,13 @@ object LuMingTheme {
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
+    fun applyActivityTheme(activity: Activity) {
+        activity.setTheme(
+            if (isDark(activity)) android.R.style.Theme_Material_NoActionBar
+            else android.R.style.Theme_Material_Light_NoActionBar
+        )
+    }
+
     fun applySystemBars(activity: Activity) {
         val dark = isDark(activity)
         val bg = bg(activity)

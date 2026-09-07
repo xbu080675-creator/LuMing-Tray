@@ -42,12 +42,10 @@ class ApiKeyManagementActivity : FragmentActivity() {
     private var loading = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        LuMingTheme.applyActivityTheme(this)
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bgColor()
-        window.navigationBarColor = bgColor()
+        LuMingTheme.applySystemBars(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         setContentView(buildUi())
         loadData()
     }
@@ -150,7 +148,7 @@ class ApiKeyManagementActivity : FragmentActivity() {
             gravity = Gravity.CENTER
             setTextColor(accentDark())
             setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = pillBackground(Color.rgb(222, 243, 237))
+            background = pillBackground(LuMingTheme.positivePill(this@ApiKeyManagementActivity))
         }
         header.addView(statusPill)
         return header
@@ -725,19 +723,19 @@ class ApiKeyManagementActivity : FragmentActivity() {
     private fun panelBackground() = GradientDrawable().apply {
         setColor(panelColor())
         cornerRadius = dp(24).toFloat()
-        setStroke(dp(1), Color.argb(210, 255, 255, 255))
+        setStroke(dp(1), LuMingTheme.border(this@ApiKeyManagementActivity))
     }
 
     private fun buttonBackground() = GradientDrawable().apply {
-        setColor(Color.rgb(239, 244, 246))
+        setColor(LuMingTheme.panelAlt(this@ApiKeyManagementActivity))
         cornerRadius = dp(16).toFloat()
-        setStroke(dp(1), Color.rgb(221, 229, 233))
+        setStroke(dp(1), LuMingTheme.border(this@ApiKeyManagementActivity))
     }
 
     private fun inputBackground() = GradientDrawable().apply {
-        setColor(Color.rgb(235, 241, 244))
+        setColor(LuMingTheme.input(this@ApiKeyManagementActivity))
         cornerRadius = dp(15).toFloat()
-        setStroke(dp(1), Color.rgb(218, 227, 231))
+        setStroke(dp(1), LuMingTheme.border(this@ApiKeyManagementActivity))
     }
 
     private fun pillBackground(color: Int) = GradientDrawable().apply {
@@ -752,12 +750,12 @@ class ApiKeyManagementActivity : FragmentActivity() {
 
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     private fun matchHeight(height: Int) = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(height))
-    private fun bgColor() = Color.rgb(232, 239, 242)
-    private fun panelColor() = Color.rgb(242, 247, 249)
-    private fun accentDark() = Color.rgb(21, 125, 106)
-    private fun textPrimary() = Color.rgb(37, 47, 58)
-    private fun textSecondary() = Color.rgb(75, 88, 101)
-    private fun textMuted() = Color.rgb(118, 131, 143)
+    private fun bgColor() = LuMingTheme.bg(this)
+    private fun panelColor() = LuMingTheme.panel(this)
+    private fun accentDark() = LuMingTheme.accentDark(this)
+    private fun textPrimary() = LuMingTheme.textPrimary(this)
+    private fun textSecondary() = LuMingTheme.textSecondary(this)
+    private fun textMuted() = LuMingTheme.textMuted(this)
     private fun money(value: Double) = String.format(Locale.US, "$%.4f", value).trimEnd('0').trimEnd('.')
     private fun rate(value: Double) = String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.') + "x"
     private fun trimNumber(value: Double) = if (value == 0.0) "0" else String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
