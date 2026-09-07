@@ -356,8 +356,8 @@ class FloatingTrayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = 0
+            this.x = 0
+            this.y = 0
             windowAnimations = 0
         }
 
