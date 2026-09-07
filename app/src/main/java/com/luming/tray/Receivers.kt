@@ -21,7 +21,7 @@ class BootReceiver : BroadcastReceiver() {
             TrayNotification.show(context)
             TrayScheduler.ensure(context)
             val config = TrayStore.loadConfig(context)
-            if (config.realtimeEnabled) {
+            if (config.realtimeEnabled || config.persistentNotificationEnabled) {
                 RealtimeUsageService.start(context)
             }
             if (config.floatingEnabled && Settings.canDrawOverlays(context)) {
