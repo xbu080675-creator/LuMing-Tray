@@ -18,10 +18,14 @@
             android:name=".SafeMainActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".StartupProbeActivity"
+            android:exported="false" />
+
         <activity-alias
             android:name=".MainActivity"
             android:exported="true"
-            android:targetActivity=".SafeMainActivity">
+            android:targetActivity=".StartupProbeActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -31,13 +35,13 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity"
+            android:parentActivityName=".StartupProbeActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".AccountActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity"
+            android:parentActivityName=".StartupProbeActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
@@ -49,22 +53,22 @@
         <activity
             android:name=".AnalysisActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity" />
+            android:parentActivityName=".StartupProbeActivity" />
 
         <activity
             android:name=".UsageExplorerActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity" />
+            android:parentActivityName=".StartupProbeActivity" />
 
         <activity
             android:name=".ModelAvailabilityActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity" />
+            android:parentActivityName=".StartupProbeActivity" />
 
         <activity
             android:name=".ApiKeyManagementActivity"
             android:exported="false"
-            android:parentActivityName=".SafeMainActivity"
+            android:parentActivityName=".StartupProbeActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
