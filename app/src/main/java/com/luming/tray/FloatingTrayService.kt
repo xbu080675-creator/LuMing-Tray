@@ -57,7 +57,6 @@ class FloatingTrayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-
         if (rootView == null) showOverlay(config)
         renderStats(force = true)
         return START_STICKY
@@ -68,10 +67,7 @@ class FloatingTrayService : Service() {
         cancelPendingWindowUpdate()
         hideResizePreview()
         rootView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (_: Exception) {
-            }
+            try { windowManager.removeView(it) } catch (_: Exception) {}
         }
         rootView = null
         params = null
@@ -111,10 +107,7 @@ class FloatingTrayService : Service() {
             setTextColor(Color.rgb(35, 43, 55))
             setPadding(0, 0, dp(8), dp(2))
         }
-        header.addView(
-            title,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
+        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val close = TextView(this).apply {
             text = "×"
@@ -155,42 +148,16 @@ class FloatingTrayService : Service() {
             minimumHeight = dp(48)
         }
         footer.addView(TextView(this).apply {
-            text = "双击标题恢复默认大小"
-            textSize = 9f
+            text = "四边均可拖动缩放 · 双击标题复位"
+            textSize = 8.8f
             setTextColor(Color.rgb(135, 143, 153))
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(footer)
 
-        overlayRoot.addView(
-            card,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-
-        /*
-         * Resize escape hatch:
-         * - the entire bottom strip is the touch target, so there is no tiny corner to hunt for;
-         * - the strip is independent of the card layout, so shrinking cannot clip it away;
-         * - the visible hint is small and text-only, so it does not cover the usage numbers.
-         */
-        val resizeZone = TextView(this).apply {
-            text = "拖底边缩放  ↘"
-            textSize = 9.5f
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(9), 0)
-            setTextColor(Color.argb(145, 72, 82, 94))
-            background = null
-        }
-        overlayRoot.addView(
-            resizeZone,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(RESIZE_ZONE_HEIGHT_DP),
-                Gravity.BOTTOM
-            )
-        )
+        overlayRoot.addView(card, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
         val height = dp(config.floatingHeightDp.coerceIn(MIN_HEIGHT_DP, MAX_HEIGHT_DP))
@@ -214,7 +181,7 @@ class FloatingTrayService : Service() {
         rootView = overlayRoot
 
         attachDrag(header, lp)
-        attachResize(resizeZone, lp)
+        addResizeEdges(overlayRoot, lp)
 
         try {
             windowManager.addView(overlayRoot, lp)
@@ -225,6 +192,30 @@ class FloatingTrayService : Service() {
             params = null
             stopSelf()
         }
+    }
+
+    /** Desktop-window style resizing: every border is a large invisible touch target. */
+    private fun addResizeEdges(root: FrameLayout, lp: WindowManager.LayoutParams) {
+        fun edge(gravity: Int, width: Int, height: Int, edges: Int) {
+            val handle = View(this).apply { setBackgroundColor(Color.TRANSPARENT) }
+            root.addView(handle, FrameLayout.LayoutParams(width, height, gravity))
+            attachResize(handle, lp, edges)
+        }
+
+        val edge = dp(EDGE_TOUCH_DP)
+        val corner = dp(CORNER_TOUCH_DP)
+
+        // Four long edges. These remain present even when the card content is clipped.
+        edge(Gravity.START, edge, FrameLayout.LayoutParams.MATCH_PARENT, EDGE_LEFT)
+        edge(Gravity.END, edge, FrameLayout.LayoutParams.MATCH_PARENT, EDGE_RIGHT)
+        edge(Gravity.TOP, FrameLayout.LayoutParams.MATCH_PARENT, edge, EDGE_TOP)
+        edge(Gravity.BOTTOM, FrameLayout.LayoutParams.MATCH_PARENT, edge, EDGE_BOTTOM)
+
+        // Corners are added last so diagonal resizing wins in the overlap area.
+        edge(Gravity.START or Gravity.TOP, corner, corner, EDGE_LEFT or EDGE_TOP)
+        edge(Gravity.END or Gravity.TOP, corner, corner, EDGE_RIGHT or EDGE_TOP)
+        edge(Gravity.START or Gravity.BOTTOM, corner, corner, EDGE_LEFT or EDGE_BOTTOM)
+        edge(Gravity.END or Gravity.BOTTOM, corner, corner, EDGE_RIGHT or EDGE_BOTTOM)
     }
 
     private fun attachDrag(handle: View, lp: WindowManager.LayoutParams) {
@@ -246,17 +237,12 @@ class FloatingTrayService : Service() {
                     moved = false
                     true
                 }
-
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - lastRawX).roundToInt()
                     val dy = (event.rawY - lastRawY).roundToInt()
                     lastRawX = event.rawX
                     lastRawY = event.rawY
-
-                    if (!moved && (abs(event.rawX - downRawX) > dp(5) || abs(event.rawY - downRawY) > dp(5))) {
-                        moved = true
-                    }
-
+                    if (!moved && (abs(event.rawX - downRawX) > dp(5) || abs(event.rawY - downRawY) > dp(5))) moved = true
                     if (dx != 0 || dy != 0) {
                         lp.x += dx
                         lp.y += dy
@@ -265,11 +251,9 @@ class FloatingTrayService : Service() {
                     }
                     true
                 }
-
                 MotionEvent.ACTION_UP -> {
                     gestureActive = false
                     flushWindowUpdate(lp)
-
                     if (!moved) {
                         val now = SystemClock.uptimeMillis()
                         if (now - lastTapAt <= DOUBLE_TAP_TIMEOUT_MS) {
@@ -279,54 +263,51 @@ class FloatingTrayService : Service() {
                             lastTapAt = now
                             persistGeometry(lp)
                         }
-                    } else {
-                        persistGeometry(lp)
-                    }
+                    } else persistGeometry(lp)
                     true
                 }
-
                 MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
                     flushWindowUpdate(lp)
                     persistGeometry(lp)
                     true
                 }
-
                 else -> false
             }
         }
     }
 
-    private fun attachResize(handle: TextView, lp: WindowManager.LayoutParams) {
-        var startWidth = 0
-        var startHeight = 0
-        var anchorX = 0
-        var anchorY = 0
+    private fun attachResize(handle: View, lp: WindowManager.LayoutParams, edges: Int) {
+        var startLeft = 0
+        var startTop = 0
+        var startRight = 0
+        var startBottom = 0
         var downRawX = 0f
         var downRawY = 0f
-        var previewWidth = 0
-        var previewHeight = 0
+        var previewLeft = 0
+        var previewTop = 0
+        var previewRight = 0
+        var previewBottom = 0
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
-                    handle.setTextColor(Color.argb(235, 72, 82, 94))
-                    handle.text = "松手应用大小  ↘"
                     cancelPendingWindowUpdate()
-
-                    startWidth = lp.width
-                    startHeight = lp.height
-                    previewWidth = startWidth
-                    previewHeight = startHeight
-                    anchorX = lp.x
-                    anchorY = lp.y
+                    startLeft = lp.x
+                    startTop = lp.y
+                    startRight = lp.x + lp.width
+                    startBottom = lp.y + lp.height
+                    previewLeft = startLeft
+                    previewTop = startTop
+                    previewRight = startRight
+                    previewBottom = startBottom
                     downRawX = event.rawX
                     downRawY = event.rawY
-                    showResizePreview(anchorX, anchorY, startWidth, startHeight)
+                    handle.setBackgroundColor(Color.argb(28, 18, 155, 120))
+                    showResizePreview(lp.x, lp.y, lp.width, lp.height)
                     true
                 }
-
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ((event.rawX - downRawX) * RESIZE_SENSITIVITY).roundToInt()
                     val dy = ((event.rawY - downRawY) * RESIZE_SENSITIVITY).roundToInt()
@@ -334,45 +315,67 @@ class FloatingTrayService : Service() {
                     val screenHeight = resources.displayMetrics.heightPixels
                     val minWidth = dp(MIN_WIDTH_DP)
                     val minHeight = dp(MIN_HEIGHT_DP)
-                    val maxWidth = minOf(dp(MAX_WIDTH_DP), screenWidth - anchorX).coerceAtLeast(minWidth)
-                    val maxHeight = minOf(dp(MAX_HEIGHT_DP), screenHeight - anchorY).coerceAtLeast(minHeight)
+                    val maxWidth = dp(MAX_WIDTH_DP)
+                    val maxHeight = dp(MAX_HEIGHT_DP)
 
-                    previewWidth = (startWidth + dx).coerceIn(minWidth, maxWidth)
-                    previewHeight = (startHeight + dy).coerceIn(minHeight, maxHeight)
-                    updateResizePreview(anchorX, anchorY, previewWidth, previewHeight)
+                    var left = startLeft
+                    var right = startRight
+                    var top = startTop
+                    var bottom = startBottom
+
+                    if (edges and EDGE_LEFT != 0) {
+                        left = (startLeft + dx).coerceIn(
+                            maxOf(0, startRight - maxWidth),
+                            startRight - minWidth
+                        )
+                    } else if (edges and EDGE_RIGHT != 0) {
+                        right = (startRight + dx).coerceIn(
+                            startLeft + minWidth,
+                            minOf(screenWidth, startLeft + maxWidth)
+                        )
+                    }
+
+                    if (edges and EDGE_TOP != 0) {
+                        top = (startTop + dy).coerceIn(
+                            maxOf(0, startBottom - maxHeight),
+                            startBottom - minHeight
+                        )
+                    } else if (edges and EDGE_BOTTOM != 0) {
+                        bottom = (startBottom + dy).coerceIn(
+                            startTop + minHeight,
+                            minOf(screenHeight, startTop + maxHeight)
+                        )
+                    }
+
+                    previewLeft = left
+                    previewTop = top
+                    previewRight = right
+                    previewBottom = bottom
+                    updateResizePreview(left, top, right - left, bottom - top)
                     true
                 }
-
                 MotionEvent.ACTION_UP -> {
                     gestureActive = false
-                    restoreResizeHint(handle)
+                    handle.setBackgroundColor(Color.TRANSPARENT)
                     hideResizePreview()
-
-                    lp.width = previewWidth
-                    lp.height = previewHeight
-                    lp.x = anchorX
-                    lp.y = anchorY
+                    lp.x = previewLeft
+                    lp.y = previewTop
+                    lp.width = previewRight - previewLeft
+                    lp.height = previewBottom - previewTop
                     clampPosition(lp)
                     flushWindowUpdate(lp)
                     persistGeometry(lp)
                     true
                 }
-
                 MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
-                    restoreResizeHint(handle)
+                    handle.setBackgroundColor(Color.TRANSPARENT)
                     hideResizePreview()
                     true
                 }
-
                 else -> false
             }
         }
-    }
-
-    private fun restoreResizeHint(handle: TextView) {
-        handle.text = "拖底边缩放  ↘"
-        handle.setTextColor(Color.argb(145, 72, 82, 94))
     }
 
     private fun resetWindowSize(lp: WindowManager.LayoutParams) {
@@ -385,7 +388,6 @@ class FloatingTrayService : Service() {
 
     private fun showResizePreview(x: Int, y: Int, width: Int, height: Int) {
         hideResizePreview()
-
         val root = FrameLayout(this)
         val box = FrameLayout(this).apply {
             background = GradientDrawable().apply {
@@ -400,20 +402,14 @@ class FloatingTrayService : Service() {
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(Color.rgb(35, 43, 55))
         }
-        box.addView(
-            label,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-        root.addView(
-            box,
-            FrameLayout.LayoutParams(width, height).apply {
-                leftMargin = x
-                topMargin = y
-            }
-        )
+        box.addView(label, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(box, FrameLayout.LayoutParams(width, height).apply {
+            leftMargin = x
+            topMargin = y
+        })
 
         val previewLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -445,8 +441,7 @@ class FloatingTrayService : Service() {
 
     private fun updateResizePreview(x: Int, y: Int, width: Int, height: Int) {
         val box = resizePreviewBox ?: return
-        val p = (box.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(width, height)
+        val p = (box.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(width, height)
         p.width = width
         p.height = height
         p.leftMargin = x
@@ -457,10 +452,7 @@ class FloatingTrayService : Service() {
 
     private fun hideResizePreview() {
         resizePreviewRoot?.let {
-            try {
-                windowManager.removeViewImmediate(it)
-            } catch (_: Exception) {
-            }
+            try { windowManager.removeViewImmediate(it) } catch (_: Exception) {}
         }
         resizePreviewRoot = null
         resizePreviewBox = null
@@ -475,7 +467,6 @@ class FloatingTrayService : Service() {
             applyWindowUpdate(lp)
             return
         }
-
         if (pendingWindowUpdate != null) return
         val delay = (WINDOW_UPDATE_INTERVAL_MS - elapsed).coerceAtLeast(1L)
         val runnable = Runnable {
@@ -500,10 +491,7 @@ class FloatingTrayService : Service() {
 
     private fun applyWindowUpdate(lp: WindowManager.LayoutParams) {
         val view = rootView ?: return
-        try {
-            windowManager.updateViewLayout(view, lp)
-        } catch (_: Exception) {
-        }
+        try { windowManager.updateViewLayout(view, lp) } catch (_: Exception) {}
     }
 
     private fun renderStats(force: Boolean = false) {
@@ -514,19 +502,15 @@ class FloatingTrayService : Service() {
             return
         }
 
-        val signature = if (stats == null) {
-            "null:${config.balanceAlertThreshold}"
-        } else {
-            listOf(
-                stats.balance,
-                stats.todayCost,
-                stats.totalTokens,
-                stats.requests,
-                stats.rpm,
-                stats.tpm,
-                config.balanceAlertThreshold
-            ).joinToString("|")
-        }
+        val signature = if (stats == null) "null:${config.balanceAlertThreshold}" else listOf(
+            stats.balance,
+            stats.todayCost,
+            stats.totalTokens,
+            stats.requests,
+            stats.rpm,
+            stats.tpm,
+            config.balanceAlertThreshold
+        ).joinToString("|")
         if (!force && signature == lastRenderedSignature) return
         lastRenderedSignature = signature
 
@@ -538,14 +522,12 @@ class FloatingTrayService : Service() {
 
         val balance = stats.balance
         balanceText?.text = "余额 ${balance?.let(TrayNotification::money) ?: "--"}"
-        balanceText?.setTextColor(
-            when {
-                balance == null -> Color.rgb(35, 43, 55)
-                balance <= 0.0 -> Color.rgb(210, 54, 68)
-                balance <= config.balanceAlertThreshold -> Color.rgb(218, 133, 30)
-                else -> Color.rgb(18, 155, 120)
-            }
-        )
+        balanceText?.setTextColor(when {
+            balance == null -> Color.rgb(35, 43, 55)
+            balance <= 0.0 -> Color.rgb(210, 54, 68)
+            balance <= config.balanceAlertThreshold -> Color.rgb(218, 133, 30)
+            else -> Color.rgb(18, 155, 120)
+        })
 
         detailText?.text = buildString {
             append("今日 ${stats.todayCost?.let(TrayNotification::money) ?: "--"}")
@@ -557,11 +539,9 @@ class FloatingTrayService : Service() {
     }
 
     private fun openMain() {
-        startActivity(
-            Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-        )
+        startActivity(Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        })
     }
 
     private fun clampPosition(lp: WindowManager.LayoutParams) {
@@ -573,22 +553,16 @@ class FloatingTrayService : Service() {
 
     private fun persistGeometry(lp: WindowManager.LayoutParams) {
         val old = TrayStore.loadConfig(this)
-        TrayStore.saveConfig(
-            this,
-            old.copy(
-                floatingWidthDp = pxToDp(lp.width).coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP),
-                floatingHeightDp = pxToDp(lp.height).coerceIn(MIN_HEIGHT_DP, MAX_HEIGHT_DP),
-                floatingX = lp.x,
-                floatingY = lp.y
-            )
-        )
+        TrayStore.saveConfig(this, old.copy(
+            floatingWidthDp = pxToDp(lp.width).coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP),
+            floatingHeightDp = pxToDp(lp.height).coerceIn(MIN_HEIGHT_DP, MAX_HEIGHT_DP),
+            floatingX = lp.x,
+            floatingY = lp.y
+        ))
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).roundToInt()
-
-    private fun pxToDp(value: Int): Int =
-        (value / resources.displayMetrics.density).roundToInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+    private fun pxToDp(value: Int): Int = (value / resources.displayMetrics.density).roundToInt()
 
     companion object {
         private const val MIN_WIDTH_DP = 150
@@ -597,25 +571,25 @@ class FloatingTrayService : Service() {
         private const val MAX_HEIGHT_DP = 300
         private const val DEFAULT_WIDTH_DP = 240
         private const val DEFAULT_HEIGHT_DP = 150
-        private const val RESIZE_ZONE_HEIGHT_DP = 34
+        private const val EDGE_TOUCH_DP = 26
+        private const val CORNER_TOUCH_DP = 38
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
-        private const val RESIZE_SENSITIVITY = 1.25f
+        private const val RESIZE_SENSITIVITY = 1.0f
         private const val DOUBLE_TAP_TIMEOUT_MS = 360L
+
+        private const val EDGE_LEFT = 1
+        private const val EDGE_TOP = 1 shl 1
+        private const val EDGE_RIGHT = 1 shl 2
+        private const val EDGE_BOTTOM = 1 shl 3
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
             if (!config.floatingEnabled || !Settings.canDrawOverlays(context)) return
-            try {
-                context.startService(Intent(context, FloatingTrayService::class.java))
-            } catch (_: Exception) {
-            }
+            try { context.startService(Intent(context, FloatingTrayService::class.java)) } catch (_: Exception) {}
         }
 
         fun stop(context: Context) {
-            try {
-                context.stopService(Intent(context, FloatingTrayService::class.java))
-            } catch (_: Exception) {
-            }
+            try { context.stopService(Intent(context, FloatingTrayService::class.java)) } catch (_: Exception) {}
         }
     }
 }
