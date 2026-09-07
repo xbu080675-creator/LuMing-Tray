@@ -11,8 +11,8 @@ android {
         applicationId = "com.luming.tray"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.15.0"
+        versionCode = 23
+        versionName = "0.16.0"
     }
 
     compileOptions {
@@ -28,5 +28,6 @@ android {
 dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
