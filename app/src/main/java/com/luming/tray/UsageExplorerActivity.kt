@@ -33,7 +33,7 @@ class UsageExplorerActivity : Activity() {
     private lateinit var modelSection: LinearLayout
     private lateinit var groupSection: LinearLayout
     private lateinit var platformSection: LinearLayout
-    private lateinit var trendChart: TokenTrendView
+    private lateinit var trendChart: InteractiveTokenTrendView
     private lateinit var logsContainer: LinearLayout
     private lateinit var refreshButton: Button
 
@@ -83,7 +83,7 @@ class UsageExplorerActivity : Activity() {
 
         root.addView(sectionTitle("Token 使用趋势"))
         val trendPanel = softPanel().apply { setPadding(dp(14), dp(14), dp(14), dp(10)) }
-        trendChart = TokenTrendView(this)
+        trendChart = InteractiveTokenTrendView(this)
         trendPanel.addView(trendChart, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(220)))
         trendPanel.addView(TextView(this).apply {
             text = "输入 · 输出 · Cache Read · Cache Create"
@@ -266,7 +266,7 @@ class UsageExplorerActivity : Activity() {
                 setPadding(0, dp(14), 0, dp(8))
             })
         } else {
-            val chart = DonutChartView(this)
+            val chart = InteractiveDonutChartView(this)
             chart.setData(items)
             panel.addView(chart, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(180)).apply { topMargin = dp(8) })
             val total = items.sumOf { it.tokens }.coerceAtLeast(1L)

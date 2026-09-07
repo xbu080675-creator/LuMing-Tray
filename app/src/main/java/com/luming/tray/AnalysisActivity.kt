@@ -29,7 +29,7 @@ class AnalysisActivity : Activity() {
     private lateinit var perMillionValue: TextView
     private lateinit var avg7Value: TextView
     private lateinit var peakValue: TextView
-    private lateinit var chart: SpendBarChart
+    private lateinit var chart: InteractiveSpendBarChart
     private lateinit var modelsContainer: LinearLayout
     private lateinit var groupsSection: LinearLayout
     private lateinit var groupsContainer: LinearLayout
@@ -160,7 +160,7 @@ class AnalysisActivity : Activity() {
 
         root.addView(sectionTitle("近 7 日趋势"))
         val chartPanel = softPanel().apply { setPadding(dp(12), dp(14), dp(12), dp(10)) }
-        chart = SpendBarChart(this)
+        chart = InteractiveSpendBarChart(this)
         chartPanel.addView(chart, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(190)))
         root.addView(chartPanel, matchWrap())
 
