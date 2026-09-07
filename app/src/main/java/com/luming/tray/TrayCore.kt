@@ -85,13 +85,21 @@ object TrayStore {
     }
 
     fun saveConfig(context: Context, config: TrayConfig) {
+        // Secrets are deliberately written only through SecureVault. The normal preference file
+        // contains settings and non-sensitive metadata, never API keys, cookies or bearer tokens.
+        SecureVault.put(context, "apiKey", config.apiKey.trim())
+        SecureVault.put(context, "accessToken", config.accessToken.trim())
+        SecureVault.put(context, "consoleCookie", config.consoleCookie.trim())
+        SecureVault.put(context, "webAuthToken", config.webAuthToken.trim())
+        SecureVault.put(context, "webRefreshToken", config.webRefreshToken.trim())
+
         prefs(context).edit()
             .putString("baseUrl", config.baseUrl.trim().ifBlank { TrayConfig().baseUrl })
-            .putString("apiKey", config.apiKey.trim())
-            .putString("accessToken", config.accessToken.trim())
-            .putString("consoleCookie", config.consoleCookie.trim())
-            .putString("webAuthToken", config.webAuthToken.trim())
-            .putString("webRefreshToken", config.webRefreshToken.trim())
+            .remove("apiKey")
+            .remove("accessToken")
+            .remove("consoleCookie")
+            .remove("webAuthToken")
+            .remove("webRefreshToken")
             .putLong("webTokenExpiresAt", config.webTokenExpiresAt)
             .putBoolean("realtimeEnabled", config.realtimeEnabled)
             .putBoolean("floatingEnabled", config.floatingEnabled)
@@ -101,18 +109,24 @@ object TrayStore {
             .putInt("floatingY", config.floatingY)
             .putBoolean("balanceAlertEnabled", config.balanceAlertEnabled)
             .putString("balanceAlertThreshold", config.balanceAlertThreshold.toString())
+            .putBoolean("secureVaultMigratedV1", true)
             .apply()
     }
 
     fun loadConfig(context: Context): TrayConfig {
         val p = prefs(context)
+
+        // Transparently upgrade 0.7.x installs. Once the old values are copied into the
+        // Keystore-backed vault, the plaintext keys are deleted from luming_tray preferences.
+        SecureVault.migrateLegacy(context, p)
+
         return TrayConfig(
             baseUrl = p.getString("baseUrl", null)?.takeIf { it.isNotBlank() } ?: TrayConfig().baseUrl,
-            apiKey = p.getString("apiKey", "") ?: "",
-            accessToken = p.getString("accessToken", "") ?: "",
-            consoleCookie = p.getString("consoleCookie", "") ?: "",
-            webAuthToken = p.getString("webAuthToken", "") ?: "",
-            webRefreshToken = p.getString("webRefreshToken", "") ?: "",
+            apiKey = SecureVault.get(context, "apiKey"),
+            accessToken = SecureVault.get(context, "accessToken"),
+            consoleCookie = SecureVault.get(context, "consoleCookie"),
+            webAuthToken = SecureVault.get(context, "webAuthToken"),
+            webRefreshToken = SecureVault.get(context, "webRefreshToken"),
             webTokenExpiresAt = p.getLong("webTokenExpiresAt", 0L),
             realtimeEnabled = p.getBoolean("realtimeEnabled", true),
             floatingEnabled = p.getBoolean("floatingEnabled", false),
