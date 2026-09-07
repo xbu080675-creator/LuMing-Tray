@@ -11,13 +11,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.InputType
-import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -25,6 +22,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * 0.17 dashboard shell.
+ *
+ * The home screen is intentionally a dashboard again, not a settings form. Provider connection,
+ * compatibility credentials and thresholds live in SettingsActivity; account/security lives in
+ * AccountActivity. This keeps the first screen readable even as provider features keep growing.
+ */
 class MainActivity : Activity() {
     private lateinit var balanceValueText: TextView
     private lateinit var todayCostValueText: TextView
@@ -36,10 +40,6 @@ class MainActivity : Activity() {
     private lateinit var updateValueText: TextView
     private lateinit var diagnosticText: TextView
     private lateinit var loginStateText: TextView
-    private lateinit var baseUrlField: EditText
-    private lateinit var apiKeyField: EditText
-    private lateinit var accessTokenField: EditText
-    private lateinit var balanceAlertThresholdField: EditText
     private lateinit var refreshButton: Button
     private lateinit var realtimeButton: Button
     private lateinit var floatingButton: Button
@@ -47,15 +47,13 @@ class MainActivity : Activity() {
 
     private var autoRefreshInFlight = false
     private var waitingOverlayPermission = false
+    private var lastDark = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bgColor()
-        window.navigationBarColor = bgColor()
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        lastDark = LuMingTheme.isDark(this)
+        LuMingTheme.applySystemBars(this)
         setContentView(buildUi())
-        loadConfigIntoFields()
         requestNotificationPermissionIfNeeded()
         TrayScheduler.ensure(this)
         renderState()
@@ -63,6 +61,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (lastDark != LuMingTheme.isDark(this)) {
+            recreate()
+            return
+        }
         if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
             waitingOverlayPermission = false
             val old = TrayStore.loadConfig(this)
@@ -90,13 +92,13 @@ class MainActivity : Activity() {
                 val bottom = if (Build.VERSION.SDK_INT >= 30) insets.getInsets(WindowInsets.Type.navigationBars()).bottom else {
                     @Suppress("DEPRECATION") insets.systemWindowInsetBottom
                 }
-                view.setPadding(dp(18), dp(16) + top, dp(18), dp(24) + bottom)
+                view.setPadding(dp(18), dp(14) + top, dp(18), dp(24) + bottom)
                 insets
             }
         }
 
         root.addView(buildHeader())
-        root.addView(buildHero(), matchWrap().apply { topMargin = dp(4) })
+        root.addView(buildHero(), matchWrap().apply { topMargin = dp(6) })
 
         root.addView(sectionTitle("今日概览"))
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -121,59 +123,61 @@ class MainActivity : Activity() {
         val io = smallMetricBox("输入 / 输出"); ioValueText = io.second
         val rpm = smallMetricBox("RPM / TPM"); perfValueText = rpm.second
         perf.addView(io.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        perf.addView(View(this).apply { setBackgroundColor(Color.rgb(215, 224, 228)) }, LinearLayout.LayoutParams(dp(1), dp(42)).apply {
+        perf.addView(View(this).apply { setBackgroundColor(dividerColor()) }, LinearLayout.LayoutParams(dp(1), dp(42)).apply {
             leftMargin = dp(12); rightMargin = dp(12)
         })
         perf.addView(rpm.first, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(perf, matchWrap().apply { topMargin = dp(12) })
 
-        root.addView(sectionTitle("快捷控制"))
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        realtimeButton = actionButton("近实时监控") { toggleRealtime() }
-        floatingButton = actionButton("悬浮窗") { toggleFloating() }
-        controls.addView(realtimeButton, weightedActionParams(endMargin = 6))
-        controls.addView(floatingButton, weightedActionParams(startMargin = 6))
-        root.addView(controls)
+        root.addView(sectionTitle("工作台"))
+        root.addView(toolRow(
+            toolCard("用量中心", "分布 · 趋势 · 请求日志", UsageExplorerActivity::class.java),
+            toolCard("模型状态", "渠道 · 可用率 · 后台探活", ModelAvailabilityActivity::class.java)
+        ))
+        root.addView(toolRow(
+            toolCard("API 管理", "Key · 分组 · 配额 · 限速", ApiKeyManagementActivity::class.java),
+            toolCard("消费分析", "成本归因 · 异常 · 预测", AnalysisActivity::class.java)
+        ), matchWrap().apply { topMargin = dp(12) })
 
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(actionButton("立即充值") {
-            val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
-            if (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) saveFields(baseUrl)
-            startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
-        }, weightedActionParams(endMargin = 6))
-        refreshButton = actionButton("刷新数据") { saveAndRefresh() }
-        actions.addView(refreshButton, weightedActionParams(startMargin = 6))
-        root.addView(actions, matchWrap().apply { topMargin = dp(10) })
-
-        root.addView(navButton("消费分析 · 看看钱花在哪里", AnalysisActivity::class.java))
-        root.addView(navButton("用量中心 · 分布 / 趋势 / 请求日志", UsageExplorerActivity::class.java))
-        root.addView(navButton("模型可用性 · 渠道 / 模型 / 稳定性", ModelAvailabilityActivity::class.java))
-        root.addView(navButton("API 管理 · Key / 分组 / 配额 / 限速", ApiKeyManagementActivity::class.java))
-        root.addView(TextView(this).apply {
-            text = "消费分析负责成本归因；用量中心看模型/分组/平台分布、Token 趋势和最近请求；模型可用性盯线路；API 管理负责 Key。"
-            textSize = 11f
+        root.addView(sectionTitle("实时监控"))
+        val monitor = softPanel().apply { setPadding(dp(14), dp(14), dp(14), dp(14)) }
+        val controlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        realtimeButton = stateButton("实时") { toggleRealtime() }
+        floatingButton = stateButton("悬浮") { toggleFloating() }
+        balanceAlertButton = stateButton("余额提醒") { toggleBalanceAlert() }
+        controlRow.addView(realtimeButton, weightedActionParams(endMargin = 4))
+        controlRow.addView(floatingButton, weightedActionParams(startMargin = 2, endMargin = 2))
+        controlRow.addView(balanceAlertButton, weightedActionParams(startMargin = 4))
+        monitor.addView(controlRow)
+        monitor.addView(TextView(this).apply {
+            text = "高级阈值、站点地址与兼容凭据已移到设置页；首页只保留高频开关。"
+            textSize = 10.5f
             setTextColor(textMuted())
-            setPadding(dp(4), dp(9), dp(4), 0)
+            setPadding(dp(3), dp(10), dp(3), 0)
         })
-
-        root.addView(sectionTitle("余额预警"))
-        root.addView(buildAlertPanel())
-        root.addView(sectionTitle("连接与授权"))
-        root.addView(buildConnectionPanel())
-        root.addView(sectionTitle("高级选项"))
-        root.addView(buildAdvancedPanel())
+        root.addView(monitor)
 
         root.addView(sectionTitle("系统状态"))
         diagnosticText = TextView(this).apply {
-            textSize = 12.5f
+            textSize = 11.5f
             setTextColor(textSecondary())
-            setPadding(dp(16), dp(15), dp(16), dp(15))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
             background = panelBackground()
             elevation = dp(3).toFloat()
         }
         root.addView(diagnosticText, matchWrap())
+
+        val footerActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        footerActions.addView(actionButton("账户中心") {
+            startActivity(Intent(this@MainActivity, AccountActivity::class.java))
+        }, weightedActionParams(endMargin = 6))
+        footerActions.addView(actionButton("应用设置") {
+            startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+        }, weightedActionParams(startMargin = 6))
+        root.addView(footerActions, matchWrap().apply { topMargin = dp(16) })
+
         root.addView(TextView(this).apply {
-            text = "LuMing Tray 0.15.0 · Usage Explorer"
+            text = "LuMing Tray 0.17.0 · Stable Dashboard Shell"
             textSize = 10.5f
             setTextColor(textMuted())
             gravity = Gravity.CENTER_HORIZONTAL
@@ -184,23 +188,31 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    private fun navButton(label: String, target: Class<out Activity>): View = actionButton(label) {
-        startActivity(Intent(this, target))
-    }.also { it.layoutParams = matchHeight(54).apply { topMargin = dp(10) } }
-
     private fun buildHeader(): View {
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, dp(2), dp(10)) }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), 0, dp(2), dp(10))
+        }
         header.addView(TextView(this).apply {
-            text = "LM"; textSize = 15f; gravity = Gravity.CENTER; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
+            text = "LM"; textSize = 15f; gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
             background = GradientDrawable().apply { setColor(accentColor()); cornerRadius = dp(16).toFloat() }
             elevation = dp(5).toFloat()
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-        title.addView(TextView(this).apply { text = "LuMing Tray"; textSize = 25f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()) })
-        title.addView(TextView(this).apply { text = "API USAGE DASHBOARD"; textSize = 10.5f; letterSpacing = 0.12f; setTextColor(textMuted()) })
+        title.addView(TextView(this).apply {
+            text = "LuMing Tray"; textSize = 25f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary())
+        })
+        title.addView(TextView(this).apply {
+            text = "UNIFIED API CONTROL CENTER"; textSize = 9.5f; letterSpacing = 0.10f; setTextColor(textMuted())
+        })
         header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(TextView(this).apply {
-            text = "安全存储"; textSize = 10.5f; gravity = Gravity.CENTER; setTextColor(accentDark()); background = pillBackground(Color.rgb(223, 242, 237)); setPadding(dp(10), dp(6), dp(10), dp(6))
+            text = "设置"; textSize = 11f; gravity = Gravity.CENTER; setTextColor(accentDark())
+            background = pillBackground(neutralPillColor())
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         })
         return header
     }
@@ -208,117 +220,64 @@ class MainActivity : Activity() {
     private fun buildHero(): View {
         val hero = softPanel().apply { setPadding(dp(20), dp(18), dp(20), dp(18)) }
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        top.addView(TextView(this).apply { text = "账户余额"; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textMuted()) }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(TextView(this).apply {
+            text = "账户余额"; textSize = 13f; setTypeface(typeface, Typeface.BOLD); setTextColor(textMuted())
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         loginStateText = TextView(this).apply { textSize = 10.5f; gravity = Gravity.CENTER; setPadding(dp(10), dp(5), dp(10), dp(5)) }
         top.addView(loginStateText)
         hero.addView(top)
-        balanceValueText = TextView(this).apply { text = "--"; textSize = 38f; setTypeface(typeface, Typeface.BOLD); setTextColor(accentColor()); setPadding(0, dp(8), 0, dp(2)) }
+
+        balanceValueText = TextView(this).apply {
+            text = "--"; textSize = 38f; setTypeface(typeface, Typeface.BOLD); setTextColor(accentColor()); setPadding(0, dp(8), 0, dp(2))
+        }
         updateValueText = TextView(this).apply { text = "等待首次读取"; textSize = 11.5f; setTextColor(textMuted()) }
         hero.addView(balanceValueText)
         hero.addView(updateValueText)
+
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        refreshButton = actionButton("刷新") { refreshNow(manual = true) }
+        row.addView(refreshButton, weightedActionParams(endMargin = 6))
+        row.addView(actionButton("充值") {
+            startActivity(Intent(this@MainActivity, RechargeActivity::class.java))
+        }, weightedActionParams(startMargin = 6))
+        hero.addView(row, matchWrap().apply { topMargin = dp(14) })
         return hero
     }
 
-    private fun buildAlertPanel(): View {
-        val panel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        title.addView(TextView(this).apply { text = "低余额保护"; textSize = 14f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()) })
-        title.addView(TextView(this).apply { text = "跌破阈值提醒，余额 ≤ 0 自动升级"; textSize = 10.8f; setTextColor(textMuted()); setPadding(0, dp(3), 0, 0) })
-        head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        balanceAlertButton = actionButton("预警") { toggleBalanceAlert() }.apply { textSize = 11.5f }
-        head.addView(balanceAlertButton, LinearLayout.LayoutParams(dp(104), dp(44)))
-        panel.addView(head)
-        balanceAlertThresholdField = editField("预警阈值，例如 0.50").apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL }
-        panel.addView(balanceAlertThresholdField, matchHeight(52).apply { topMargin = dp(14) })
-        return panel
+    private fun toolRow(left: View, right: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(left, weightedCardParams(endMargin = 6))
+        addView(right, weightedCardParams(startMargin = 6))
     }
 
-    private fun buildConnectionPanel(): View {
-        val panel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
-        panel.addView(fieldLabel("站点"))
-        baseUrlField = editField("API 基地址，例如 https://lmyanyu.com/v1")
-        panel.addView(baseUrlField, matchHeight(52))
-        panel.addView(fieldLabel("API Key（兼容项）").apply { setPadding(dp(2), dp(14), 0, dp(6)) })
-        apiKeyField = secretField("API Key，可选")
-        panel.addView(apiKeyField, matchHeight(52))
-        panel.addView(actionButton("网页登录并授权统计") {
-            val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
-            if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
-                diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
-                return@actionButton
-            }
-            saveFields(baseUrl)
-            startActivity(Intent(this@MainActivity, LoginActivity::class.java))
-        }, matchHeight(50).apply { topMargin = dp(14) })
-        panel.addView(TextView(this).apply {
-            text = "凭据落盘：${SecureVault.securityLabel(this@MainActivity)}"
-            textSize = 10.5f; setTextColor(accentDark()); setPadding(dp(3), dp(10), dp(3), 0)
-        })
-        return panel
-    }
-
-    private fun buildAdvancedPanel(): View {
-        val panel = softPanel().apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
-        accessTokenField = secretField("控制台 Access Token（可选）")
-        panel.addView(accessTokenField, matchHeight(52))
-        panel.addView(TextView(this).apply {
-            text = "推荐优先使用网页登录授权。API Key、Access Token、Cookie 与网页登录 Token 均进入本机加密仓库。"
-            textSize = 10.8f; setTextColor(textMuted()); setPadding(dp(2), dp(10), dp(2), 0)
-        })
-        return panel
-    }
-
-    private fun fieldLabel(value: String) = TextView(this).apply { text = value; textSize = 11f; setTypeface(typeface, Typeface.BOLD); setTextColor(textMuted()); setPadding(dp(2), 0, 0, dp(6)) }
-
-    private fun loadConfigIntoFields() {
-        val config = TrayStore.loadConfig(this)
-        baseUrlField.setText(config.baseUrl)
-        apiKeyField.setText(config.apiKey)
-        accessTokenField.setText(config.accessToken)
-        balanceAlertThresholdField.setText(String.format(Locale.US, "%.2f", config.balanceAlertThreshold))
-    }
-
-    private fun saveFields(baseUrl: String = baseUrlField.text.toString().trim().trimEnd('/')) {
-        val old = TrayStore.loadConfig(this)
-        val threshold = balanceAlertThresholdField.text.toString().trim().toDoubleOrNull()?.coerceAtLeast(0.0) ?: old.balanceAlertThreshold
-        val alertChanged = threshold != old.balanceAlertThreshold
-        TrayStore.saveConfig(this, old.copy(
-            baseUrl = baseUrl,
-            apiKey = apiKeyField.text.toString().trim(),
-            accessToken = accessTokenField.text.toString().trim(),
-            balanceAlertThreshold = threshold
-        ))
-        if (alertChanged) {
-            TrayStore.saveBalanceAlertState(this, 0)
-            TrayStore.loadStats(this)?.let { BalanceAlert.evaluate(this, it) }
+    private fun toolCard(title: String, subtitle: String, target: Class<out Activity>): View {
+        return softPanel().apply {
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            minimumHeight = dp(112)
+            isClickable = true
+            isFocusable = true
+            addView(TextView(this@MainActivity).apply {
+                text = title; textSize = 15f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary())
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = subtitle; textSize = 10.5f; setTextColor(textMuted()); setPadding(0, dp(6), 0, 0)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "打开 →"; textSize = 11f; setTextColor(accentDark()); setPadding(0, dp(12), 0, 0)
+            })
+            setOnClickListener { startActivity(Intent(this@MainActivity, target)) }
         }
-    }
-
-    private fun saveAndRefresh() {
-        val baseUrl = baseUrlField.text.toString().trim().trimEnd('/')
-        if (!baseUrl.startsWith("https://") && !baseUrl.startsWith("http://")) {
-            diagnosticText.text = "基地址格式不对，需要以 https:// 或 http:// 开头。"
-            return
-        }
-        saveFields(baseUrl)
-        TrayScheduler.ensure(this)
-        syncRealtimeService()
-        syncFloatingService()
-        refreshNow(manual = true)
     }
 
     private fun toggleRealtime() {
-        saveFields()
         val old = TrayStore.loadConfig(this)
         val next = !old.realtimeEnabled
         TrayStore.saveConfig(this, old.copy(realtimeEnabled = next))
-        if (next) RealtimeUsageService.start(this) else RealtimeUsageService.stop(this)
-        renderState(if (next) "近实时监控已开启" else "近实时监控已关闭；仍保留低频后台更新")
+        if (next || old.persistentNotificationEnabled) RealtimeUsageService.start(this) else RealtimeUsageService.stop(this)
+        renderState(if (next) "近实时监控已开启" else "近实时监控已关闭")
     }
 
     private fun toggleFloating() {
-        saveFields()
         val old = TrayStore.loadConfig(this)
         if (old.floatingEnabled) {
             TrayStore.saveConfig(this, old.copy(floatingEnabled = false))
@@ -338,7 +297,6 @@ class MainActivity : Activity() {
     }
 
     private fun toggleBalanceAlert() {
-        saveFields()
         val old = TrayStore.loadConfig(this)
         val next = !old.balanceAlertEnabled
         TrayStore.saveConfig(this, old.copy(balanceAlertEnabled = next))
@@ -348,24 +306,26 @@ class MainActivity : Activity() {
     }
 
     private fun syncRealtimeService() {
-        if (TrayStore.loadConfig(this).realtimeEnabled) RealtimeUsageService.start(this) else RealtimeUsageService.stop(this)
+        val config = TrayStore.loadConfig(this)
+        if (config.realtimeEnabled || config.persistentNotificationEnabled) RealtimeUsageService.start(this)
+        else RealtimeUsageService.stop(this)
     }
 
     private fun syncFloatingService() {
         val config = TrayStore.loadConfig(this)
-        if (config.floatingEnabled && Settings.canDrawOverlays(this)) FloatingTrayService.start(this) else FloatingTrayService.stop(this)
+        if (config.floatingEnabled && Settings.canDrawOverlays(this)) FloatingTrayService.start(this)
+        else FloatingTrayService.stop(this)
     }
 
     private fun maybeAutoRefresh() {
         if (autoRefreshInFlight) return
         val config = TrayStore.loadConfig(this)
-        val hasCredential = config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank() || config.consoleCookie.isNotBlank() || config.accessToken.isNotBlank() || config.apiKey.isNotBlank()
+        val hasCredential = config.webAuthToken.isNotBlank() || config.webRefreshToken.isNotBlank() ||
+            config.consoleCookie.isNotBlank() || config.accessToken.isNotBlank() || config.apiKey.isNotBlank()
         if (!hasCredential) return
         val stats = TrayStore.loadStats(this)
         if (stats != null && System.currentTimeMillis() - stats.updatedAt < AUTO_REFRESH_MIN_AGE_MS) return
-        autoRefreshInFlight = true
-        diagnosticText.text = "自动读取最新统计…"
-        UsageClient.refresh(this) { result -> autoRefreshInFlight = false; renderState(result.message) }
+        refreshNow(manual = false)
     }
 
     private fun refreshNow(manual: Boolean) {
@@ -382,14 +342,14 @@ class MainActivity : Activity() {
 
     private fun renderState(message: String? = null) {
         val config = TrayStore.loadConfig(this)
-        styleStateButton(realtimeButton, config.realtimeEnabled, if (config.realtimeEnabled) "近实时 · ON" else "近实时 · OFF")
+        styleStateButton(realtimeButton, config.realtimeEnabled, if (config.realtimeEnabled) "实时 · ON" else "实时 · OFF")
         val floatingReady = config.floatingEnabled && Settings.canDrawOverlays(this)
         styleStateButton(floatingButton, floatingReady, when {
-            floatingReady -> "悬浮窗 · ON"
-            config.floatingEnabled -> "悬浮窗 · 授权中"
-            else -> "悬浮窗 · OFF"
+            floatingReady -> "悬浮 · ON"
+            config.floatingEnabled -> "悬浮 · 授权"
+            else -> "悬浮 · OFF"
         })
-        styleStateButton(balanceAlertButton, config.balanceAlertEnabled, if (config.balanceAlertEnabled) "预警 · ON" else "预警 · OFF")
+        styleStateButton(balanceAlertButton, config.balanceAlertEnabled, if (config.balanceAlertEnabled) "余额提醒 · ON" else "余额提醒 · OFF")
 
         val loginOk = config.webAuthToken.isNotBlank() || config.consoleCookie.isNotBlank()
         loginStateText.text = when {
@@ -398,7 +358,7 @@ class MainActivity : Activity() {
             else -> "未授权"
         }
         loginStateText.setTextColor(if (loginOk) accentDark() else textMuted())
-        loginStateText.background = pillBackground(if (loginOk) Color.rgb(222, 243, 237) else Color.rgb(232, 237, 240))
+        loginStateText.background = pillBackground(if (loginOk) positivePillColor() else neutralPillColor())
 
         val stats = TrayStore.loadStats(this)
         if (stats == null) {
@@ -428,7 +388,11 @@ class MainActivity : Activity() {
             updateValueText.text = "最后更新 ${formatTime(stats.updatedAt)}"
         }
         val last = message ?: TrayStore.loadLastMessage(this)
-        diagnosticText.text = if (last.isBlank()) "系统已就绪 · 等待首次真实数据读取" else "接口状态 · $last"
+        diagnosticText.text = if (last.isBlank()) {
+            "系统已就绪 · 账户、授权和阈值设置已从首页移出"
+        } else {
+            "接口状态 · $last"
+        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -449,7 +413,9 @@ class MainActivity : Activity() {
     private fun metricCard(label: String, micro: String): Pair<LinearLayout, TextView> {
         val card = softPanel().apply { setPadding(dp(15), dp(14), dp(15), dp(14)); minimumHeight = dp(112) }
         card.addView(TextView(this).apply { text = micro; textSize = 8.5f; letterSpacing = 0.1f; setTextColor(textMuted()) })
-        val value = TextView(this).apply { text = "--"; textSize = 23f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(8), 0, dp(4)) }
+        val value = TextView(this).apply {
+            text = "--"; textSize = 23f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(8), 0, dp(4))
+        }
         card.addView(value)
         card.addView(TextView(this).apply { text = label; textSize = 11.5f; setTextColor(textSecondary()) })
         return card to value
@@ -458,10 +424,14 @@ class MainActivity : Activity() {
     private fun smallMetricBox(label: String): Pair<LinearLayout, TextView> {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(TextView(this).apply { text = label; textSize = 9.8f; setTextColor(textMuted()) })
-        val value = TextView(this).apply { text = "--"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(5), 0, 0) }
+        val value = TextView(this).apply {
+            text = "--"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); setTextColor(textPrimary()); setPadding(0, dp(5), 0, 0)
+        }
         box.addView(value)
         return box to value
     }
+
+    private fun stateButton(label: String, onClick: () -> Unit) = actionButton(label, onClick).apply { textSize = 10.8f }
 
     private fun actionButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
@@ -470,11 +440,11 @@ class MainActivity : Activity() {
         setTypeface(typeface, Typeface.BOLD)
         setTextColor(textSecondary())
         background = buttonBackground(false)
-        elevation = dp(4).toFloat()
+        elevation = dp(3).toFloat()
         stateListAnimator = null
         minHeight = 0
         minimumHeight = 0
-        setPadding(dp(10), 0, dp(10), 0)
+        setPadding(dp(8), 0, dp(8), 0)
         setOnClickListener { onClick() }
     }
 
@@ -484,34 +454,55 @@ class MainActivity : Activity() {
         button.background = buttonBackground(active)
     }
 
-    private fun editField(hintText: String): EditText = EditText(this).apply {
-        hint = hintText; textSize = 13.5f; setSingleLine(true); setPadding(dp(14), 0, dp(14), 0)
-        setTextColor(textPrimary()); setHintTextColor(Color.rgb(145, 154, 164)); background = inputBackground(); elevation = dp(2).toFloat()
+    private fun softPanel(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = panelBackground()
+        elevation = dp(6).toFloat()
     }
-    private fun secretField(hintText: String): EditText = editField(hintText).apply {
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        transformationMethod = PasswordTransformationMethod.getInstance()
+
+    private fun sectionTitle(value: String): TextView = TextView(this).apply {
+        text = value; textSize = 13f; setTextColor(textSecondary()); setTypeface(typeface, Typeface.BOLD)
+        setPadding(dp(3), dp(22), dp(3), dp(9))
     }
-    private fun softPanel(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = panelBackground(); elevation = dp(7).toFloat() }
-    private fun sectionTitle(value: String): TextView = TextView(this).apply { text = value; textSize = 13f; setTextColor(textSecondary()); setTypeface(typeface, Typeface.BOLD); setPadding(dp(3), dp(22), dp(3), dp(9)) }
-    private fun panelBackground() = GradientDrawable().apply { setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(210, 255, 255, 255)) }
+
+    private fun panelBackground() = GradientDrawable().apply {
+        setColor(panelColor()); cornerRadius = dp(24).toFloat(); setStroke(dp(1), borderColor())
+    }
+
     private fun buttonBackground(active: Boolean) = GradientDrawable().apply {
-        setColor(if (active) Color.rgb(225, 244, 239) else Color.rgb(239, 244, 246)); cornerRadius = dp(17).toFloat()
-        setStroke(dp(1), if (active) Color.rgb(199, 231, 222) else Color.rgb(221, 229, 233))
+        setColor(if (active) activeBgColor() else panelAltColor())
+        cornerRadius = dp(17).toFloat()
+        setStroke(dp(1), if (active) activeBorderColor() else borderColor())
     }
-    private fun inputBackground() = GradientDrawable().apply { setColor(Color.rgb(235, 241, 244)); cornerRadius = dp(17).toFloat(); setStroke(dp(1), Color.rgb(218, 227, 231)) }
+
     private fun pillBackground(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(999).toFloat() }
-    private fun weightedCardParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(startMargin); rightMargin = dp(endMargin) }
-    private fun weightedActionParams(startMargin: Int = 0, endMargin: Int = 0) = LinearLayout.LayoutParams(0, dp(52), 1f).apply { leftMargin = dp(startMargin); rightMargin = dp(endMargin) }
+
+    private fun weightedCardParams(startMargin: Int = 0, endMargin: Int = 0) =
+        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = dp(startMargin); rightMargin = dp(endMargin)
+        }
+
+    private fun weightedActionParams(startMargin: Int = 0, endMargin: Int = 0) =
+        LinearLayout.LayoutParams(0, dp(50), 1f).apply {
+            leftMargin = dp(startMargin); rightMargin = dp(endMargin)
+        }
+
     private fun matchWrap() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-    private fun matchHeight(heightDp: Int) = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp))
-    private fun bgColor() = Color.rgb(232, 239, 242)
-    private fun panelColor() = Color.rgb(242, 247, 249)
-    private fun accentColor() = Color.rgb(25, 157, 130)
-    private fun accentDark() = Color.rgb(21, 125, 106)
-    private fun textPrimary() = Color.rgb(37, 47, 58)
-    private fun textSecondary() = Color.rgb(75, 88, 101)
-    private fun textMuted() = Color.rgb(118, 131, 143)
+
+    private fun bgColor() = LuMingTheme.bg(this)
+    private fun panelColor() = LuMingTheme.panel(this)
+    private fun panelAltColor() = LuMingTheme.panelAlt(this)
+    private fun borderColor() = LuMingTheme.border(this)
+    private fun dividerColor() = LuMingTheme.divider(this)
+    private fun accentColor() = LuMingTheme.accent(this)
+    private fun accentDark() = LuMingTheme.accentDark(this)
+    private fun textPrimary() = LuMingTheme.textPrimary(this)
+    private fun textSecondary() = LuMingTheme.textSecondary(this)
+    private fun textMuted() = LuMingTheme.textMuted(this)
+    private fun activeBgColor() = LuMingTheme.activeBg(this)
+    private fun activeBorderColor() = LuMingTheme.activeBorder(this)
+    private fun positivePillColor() = LuMingTheme.positivePill(this)
+    private fun neutralPillColor() = LuMingTheme.neutralPill(this)
     private fun formatTime(timestamp: Long) = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
