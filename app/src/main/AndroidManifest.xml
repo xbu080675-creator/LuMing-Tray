@@ -34,6 +34,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".ApiKeyManagementActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".LoginActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
