@@ -166,8 +166,12 @@ class MainActivity : Activity() {
             startActivity(Intent(this@MainActivity, ModelAvailabilityActivity::class.java))
         }, matchHeight(54).apply { topMargin = dp(10) })
 
+        root.addView(actionButton("API 管理 · Key / 分组 / 配额 / 限速") {
+            startActivity(Intent(this@MainActivity, ApiKeyManagementActivity::class.java))
+        }, matchHeight(54).apply { topMargin = dp(10) })
+
         root.addView(TextView(this).apply {
-            text = "消费分析负责成本归因；模型可用性直接读取站点的渠道目录与探活状态。"
+            text = "消费分析负责成本归因；模型可用性读取渠道探活；API 管理直接管理站点 Key、分组和额度。"
             textSize = 11f
             setTextColor(textMuted())
             setPadding(dp(4), dp(9), dp(4), 0)
@@ -191,7 +195,7 @@ class MainActivity : Activity() {
         root.addView(diagnosticText, matchWrap())
 
         root.addView(TextView(this).apply {
-            text = "LuMing Tray 0.12.0 · Model Availability"
+            text = "LuMing Tray 0.14.0 · Native API Management"
             textSize = 10.5f
             setTextColor(textMuted())
             gravity = Gravity.CENTER_HORIZONTAL
