@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class FloatingTrayService : Service() {
@@ -34,8 +35,6 @@ class FloatingTrayService : Service() {
     private var lastWindowUpdateAt = 0L
     private var pendingWindowUpdate: Runnable? = null
 
-    // Resize is previewed in a separate non-touchable full-screen overlay. This avoids doing
-    // expensive WindowManager relayout transactions for every finger movement.
     private var resizePreviewRoot: FrameLayout? = null
     private var resizePreviewBox: FrameLayout? = null
     private var resizePreviewLabel: TextView? = null
@@ -82,9 +81,6 @@ class FloatingTrayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun showOverlay(config: TrayConfig) {
-        // Keep the resize grip outside the card's normal vertical layout. When the window is
-        // shrunk, card content can be clipped, but the grip stays pinned to the bottom-right
-        // corner and can always be used to grow the window again.
         val overlayRoot = FrameLayout(this).apply {
             clipChildren = false
             clipToPadding = false
@@ -156,12 +152,12 @@ class FloatingTrayService : Service() {
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(52)
+            minimumHeight = dp(48)
         }
         footer.addView(TextView(this).apply {
-            text = "拖标题移动 · 右下角缩放"
-            textSize = 9.5f
-            setTextColor(Color.rgb(130, 138, 148))
+            text = "双击标题恢复默认大小"
+            textSize = 9f
+            setTextColor(Color.rgb(135, 143, 153))
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(footer)
 
@@ -173,21 +169,27 @@ class FloatingTrayService : Service() {
             )
         )
 
-        // The touch target stays large enough to grab even at minimum window size, but the
-        // visible arrow is deliberately small and translucent so it does not cover usage data.
-        val resizeGrip = TextView(this).apply {
-            text = "↘"
-            textSize = 18f
-            gravity = Gravity.END or Gravity.BOTTOM
-            setPadding(0, 0, dp(6), dp(5))
-            setTextColor(Color.rgb(72, 82, 94))
-            alpha = RESIZE_GRIP_IDLE_ALPHA
+        /*
+         * Resize escape hatch:
+         * - the entire bottom strip is the touch target, so there is no tiny corner to hunt for;
+         * - the strip is independent of the card layout, so shrinking cannot clip it away;
+         * - the visible hint is small and text-only, so it does not cover the usage numbers.
+         */
+        val resizeZone = TextView(this).apply {
+            text = "拖底边缩放  ↘"
+            textSize = 9.5f
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(9), 0)
+            setTextColor(Color.argb(145, 72, 82, 94))
             background = null
-            elevation = 0f
         }
         overlayRoot.addView(
-            resizeGrip,
-            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END or Gravity.BOTTOM)
+            resizeZone,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(RESIZE_ZONE_HEIGHT_DP),
+                Gravity.BOTTOM
+            )
         )
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
@@ -212,7 +214,7 @@ class FloatingTrayService : Service() {
         rootView = overlayRoot
 
         attachDrag(header, lp)
-        attachResize(resizeGrip, lp)
+        attachResize(resizeZone, lp)
 
         try {
             windowManager.addView(overlayRoot, lp)
@@ -228,6 +230,10 @@ class FloatingTrayService : Service() {
     private fun attachDrag(handle: View, lp: WindowManager.LayoutParams) {
         var lastRawX = 0f
         var lastRawY = 0f
+        var downRawX = 0f
+        var downRawY = 0f
+        var lastTapAt = 0L
+        var moved = false
 
         handle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -235,6 +241,9 @@ class FloatingTrayService : Service() {
                     gestureActive = true
                     lastRawX = event.rawX
                     lastRawY = event.rawY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    moved = false
                     true
                 }
 
@@ -243,6 +252,11 @@ class FloatingTrayService : Service() {
                     val dy = (event.rawY - lastRawY).roundToInt()
                     lastRawX = event.rawX
                     lastRawY = event.rawY
+
+                    if (!moved && (abs(event.rawX - downRawX) > dp(5) || abs(event.rawY - downRawY) > dp(5))) {
+                        moved = true
+                    }
+
                     if (dx != 0 || dy != 0) {
                         lp.x += dx
                         lp.y += dy
@@ -252,7 +266,26 @@ class FloatingTrayService : Service() {
                     true
                 }
 
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_UP -> {
+                    gestureActive = false
+                    flushWindowUpdate(lp)
+
+                    if (!moved) {
+                        val now = SystemClock.uptimeMillis()
+                        if (now - lastTapAt <= DOUBLE_TAP_TIMEOUT_MS) {
+                            lastTapAt = 0L
+                            resetWindowSize(lp)
+                        } else {
+                            lastTapAt = now
+                            persistGeometry(lp)
+                        }
+                    } else {
+                        persistGeometry(lp)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
                     flushWindowUpdate(lp)
                     persistGeometry(lp)
@@ -264,7 +297,7 @@ class FloatingTrayService : Service() {
         }
     }
 
-    private fun attachResize(handle: View, lp: WindowManager.LayoutParams) {
+    private fun attachResize(handle: TextView, lp: WindowManager.LayoutParams) {
         var startWidth = 0
         var startHeight = 0
         var anchorX = 0
@@ -278,8 +311,10 @@ class FloatingTrayService : Service() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
-                    handle.alpha = RESIZE_GRIP_ACTIVE_ALPHA
+                    handle.setTextColor(Color.argb(235, 72, 82, 94))
+                    handle.text = "松手应用大小  ↘"
                     cancelPendingWindowUpdate()
+
                     startWidth = lp.width
                     startHeight = lp.height
                     previewWidth = startWidth
@@ -310,8 +345,9 @@ class FloatingTrayService : Service() {
 
                 MotionEvent.ACTION_UP -> {
                     gestureActive = false
-                    handle.alpha = RESIZE_GRIP_IDLE_ALPHA
+                    restoreResizeHint(handle)
                     hideResizePreview()
+
                     lp.width = previewWidth
                     lp.height = previewHeight
                     lp.x = anchorX
@@ -324,7 +360,7 @@ class FloatingTrayService : Service() {
 
                 MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
-                    handle.alpha = RESIZE_GRIP_IDLE_ALPHA
+                    restoreResizeHint(handle)
                     hideResizePreview()
                     true
                 }
@@ -334,12 +370,19 @@ class FloatingTrayService : Service() {
         }
     }
 
-    /**
-     * Render resizing in a separate, non-touchable full-screen window. Only the lightweight
-     * preview view changes size while the finger moves, so the preview follows the finger
-     * immediately even on ROMs where live TYPE_APPLICATION_OVERLAY relayout is sluggish.
-     * The real overlay window is resized once, on ACTION_UP.
-     */
+    private fun restoreResizeHint(handle: TextView) {
+        handle.text = "拖底边缩放  ↘"
+        handle.setTextColor(Color.argb(145, 72, 82, 94))
+    }
+
+    private fun resetWindowSize(lp: WindowManager.LayoutParams) {
+        lp.width = dp(DEFAULT_WIDTH_DP)
+        lp.height = dp(DEFAULT_HEIGHT_DP)
+        clampPosition(lp)
+        flushWindowUpdate(lp)
+        persistGeometry(lp)
+    }
+
     private fun showResizePreview(x: Int, y: Int, width: Int, height: Int) {
         hideResizePreview()
 
@@ -552,10 +595,12 @@ class FloatingTrayService : Service() {
         private const val MAX_WIDTH_DP = 420
         private const val MIN_HEIGHT_DP = 96
         private const val MAX_HEIGHT_DP = 300
+        private const val DEFAULT_WIDTH_DP = 240
+        private const val DEFAULT_HEIGHT_DP = 150
+        private const val RESIZE_ZONE_HEIGHT_DP = 34
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
         private const val RESIZE_SENSITIVITY = 1.25f
-        private const val RESIZE_GRIP_IDLE_ALPHA = 0.42f
-        private const val RESIZE_GRIP_ACTIVE_ALPHA = 0.95f
+        private const val DOUBLE_TAP_TIMEOUT_MS = 360L
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
