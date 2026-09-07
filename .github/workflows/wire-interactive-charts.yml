@@ -1,0 +1,61 @@
+name: Wire interactive chart tooltips
+
+on:
+  push:
+    branches:
+      - fix/015-safe-launcher
+    paths:
+      - .github/workflows/wire-interactive-charts.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/015-safe-launcher
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Wire interactive chart views
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f"missing expected text in {path}: {old}")
+              p.write_text(s.replace(old, new, 1))
+
+          analysis = "app/src/main/java/com/luming/tray/AnalysisActivity.kt"
+          replace_once(analysis, "private lateinit var chart: SpendBarChart", "private lateinit var chart: InteractiveSpendBarChart")
+          replace_once(analysis, "chart = SpendBarChart(this)", "chart = InteractiveSpendBarChart(this)")
+
+          usage = "app/src/main/java/com/luming/tray/UsageExplorerActivity.kt"
+          replace_once(usage, "private lateinit var trendChart: TokenTrendView", "private lateinit var trendChart: InteractiveTokenTrendView")
+          replace_once(usage, "trendChart = TokenTrendView(this)", "trendChart = InteractiveTokenTrendView(this)")
+          replace_once(usage, "val chart = DonutChartView(this)", "val chart = InteractiveDonutChartView(this)")
+
+          gradle = Path("app/build.gradle.kts")
+          g = gradle.read_text()
+          if "versionCode = 35" not in g or 'versionName = "0.17.6.5"' not in g:
+              raise SystemExit("unexpected app version")
+          g = g.replace("versionCode = 35", "versionCode = 36", 1)
+          g = g.replace('versionName = "0.17.6.5"', 'versionName = "0.17.6.6"', 1)
+          gradle.write_text(g)
+          PY
+
+      - name: Commit wired charts
+        shell: bash
+        run: |
+          git config user.name "PocketSpace"
+          git config user.email "xbu080675@gmail.com"
+          git add app
+          git commit -m "feat: show tap tooltips on line pie and bar charts"
+          git push origin HEAD:fix/015-safe-launcher
