@@ -173,24 +173,21 @@ class FloatingTrayService : Service() {
             )
         )
 
+        // The touch target stays large enough to grab even at minimum window size, but the
+        // visible arrow is deliberately small and translucent so it does not cover usage data.
         val resizeGrip = TextView(this).apply {
             text = "↘"
-            textSize = 24f
-            gravity = Gravity.CENTER
+            textSize = 18f
+            gravity = Gravity.END or Gravity.BOTTOM
+            setPadding(0, 0, dp(6), dp(5))
             setTextColor(Color.rgb(72, 82, 94))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(205, 245, 248, 249))
-                cornerRadius = dp(14).toFloat()
-                setStroke(dp(1), Color.argb(190, 180, 190, 198))
-            }
-            elevation = dp(14).toFloat()
+            alpha = RESIZE_GRIP_IDLE_ALPHA
+            background = null
+            elevation = 0f
         }
         overlayRoot.addView(
             resizeGrip,
-            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END or Gravity.BOTTOM).apply {
-                rightMargin = dp(2)
-                bottomMargin = dp(2)
-            }
+            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.END or Gravity.BOTTOM)
         )
 
         val width = dp(config.floatingWidthDp.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP))
@@ -281,6 +278,7 @@ class FloatingTrayService : Service() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     gestureActive = true
+                    handle.alpha = RESIZE_GRIP_ACTIVE_ALPHA
                     cancelPendingWindowUpdate()
                     startWidth = lp.width
                     startHeight = lp.height
@@ -312,6 +310,7 @@ class FloatingTrayService : Service() {
 
                 MotionEvent.ACTION_UP -> {
                     gestureActive = false
+                    handle.alpha = RESIZE_GRIP_IDLE_ALPHA
                     hideResizePreview()
                     lp.width = previewWidth
                     lp.height = previewHeight
@@ -325,6 +324,7 @@ class FloatingTrayService : Service() {
 
                 MotionEvent.ACTION_CANCEL -> {
                     gestureActive = false
+                    handle.alpha = RESIZE_GRIP_IDLE_ALPHA
                     hideResizePreview()
                     true
                 }
@@ -554,6 +554,8 @@ class FloatingTrayService : Service() {
         private const val MAX_HEIGHT_DP = 300
         private const val WINDOW_UPDATE_INTERVAL_MS = 8L
         private const val RESIZE_SENSITIVITY = 1.25f
+        private const val RESIZE_GRIP_IDLE_ALPHA = 0.42f
+        private const val RESIZE_GRIP_ACTIVE_ALPHA = 0.95f
 
         fun start(context: Context) {
             val config = TrayStore.loadConfig(context)
